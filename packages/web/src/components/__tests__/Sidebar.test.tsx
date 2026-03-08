@@ -12,10 +12,11 @@ function renderSidebar(collapsed = false) {
 }
 
 describe("Sidebar", () => {
-  it("renders all 7 nav items plus Settings", () => {
+  it("renders all nav items plus Settings", () => {
     renderSidebar();
     expect(screen.getByText("Dashboard")).toBeInTheDocument();
     expect(screen.getByText("Sessions")).toBeInTheDocument();
+    expect(screen.getByText("Channels")).toBeInTheDocument();
     expect(screen.getByText("Usage")).toBeInTheDocument();
     expect(screen.getByText("Security")).toBeInTheDocument();
     expect(screen.getByText("Config")).toBeInTheDocument();

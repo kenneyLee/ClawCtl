@@ -2,6 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterAll, afterEach, beforeAll } from "vitest";
 import { server } from "./handlers.js";
+import "../i18n";
 
 beforeAll(() => server.listen({ onUnhandledRequest: "warn" }));
 afterEach(() => { cleanup(); server.resetHandlers(); });
