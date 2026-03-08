@@ -11,6 +11,7 @@ import { checkNodeVersion, getVersions, streamInstall, streamUninstall } from ".
 import { readRemoteConfig, writeRemoteConfig, getConfigDir, profileFromInstanceId } from "../lifecycle/config.js";
 import { SnapshotStore } from "../lifecycle/snapshot.js";
 import { extractModels, mergeAgentConfig, removeAgent } from "../lifecycle/agent-config.js";
+import { mergeChannelAccountConfig } from "../lifecycle/channel-config.js";
 import { getOAuthStatus, clearOAuthFlow } from "../llm/openai-oauth.js";
 
 const VERSION_CACHE_TTL = 60_000; // 60s
@@ -188,6 +189,75 @@ export function lifecycleRoutes(hostStore: HostStore, manager: InstanceManager, 
       if (err.message.includes("not found")) {
         return c.json({ error: err.message }, 404);
       }
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
+  // --- Channel management ---
+
+  app.get("/:id/channels", async (c) => {
+    const id = c.req.param("id");
+    const inst = manager.get(id);
+    if (!inst) return c.json({ error: "instance not found" }, 404);
+    const client = manager.getClient(id);
+    if (!client) return c.json({ error: "not connected" }, 502);
+    try {
+      const details = await client.fetchChannelDetails(false);
+      return c.json(details);
+    } catch (err: any) {
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
+  app.post("/:id/channels/probe", async (c) => {
+    const id = c.req.param("id");
+    const inst = manager.get(id);
+    if (!inst) return c.json({ error: "instance not found" }, 404);
+    const client = manager.getClient(id);
+    if (!client) return c.json({ error: "not connected" }, 502);
+    try {
+      const details = await client.fetchChannelDetails(true);
+      return c.json(details);
+    } catch (err: any) {
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
+  app.post("/:id/channels/logout", async (c) => {
+    const id = c.req.param("id");
+    const inst = manager.get(id);
+    if (!inst) return c.json({ error: "instance not found" }, 404);
+    const client = manager.getClient(id);
+    if (!client) return c.json({ error: "not connected" }, 502);
+    const { channel, accountId } = await c.req.json();
+    if (!channel) return c.json({ error: "channel required" }, 400);
+    try {
+      const result = await client.channelLogout(channel, accountId);
+      auditLog(db, c, "lifecycle.channel-logout", `Logout ${channel}/${accountId || "default"}`, id);
+      return c.json({ ok: true, ...result });
+    } catch (err: any) {
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
+  app.put("/:id/channels/config", async (c) => {
+    const id = c.req.param("id");
+    if (!manager.get(id)) return c.json({ error: "instance not found" }, 404);
+    const profile = profileFromInstanceId(id);
+    const configDir = getConfigDir(profile);
+    const exec = getExecutor(id, hostStore);
+    const { channel, accountId, config: update } = await c.req.json();
+    if (!channel) return c.json({ error: "channel required" }, 400);
+    try {
+      const config = await readRemoteConfig(exec, configDir);
+      const merged = mergeChannelAccountConfig(config, channel, accountId || "default", update);
+      await writeRemoteConfig(exec, configDir, merged);
+      try { snapshots.create(id, JSON.stringify(merged), "channel config update"); } catch { /* best-effort */ }
+      auditLog(db, c, "lifecycle.channel-config", `Updated ${channel}/${accountId || "default"}`, id);
+      return c.json({ ok: true });
+    } catch (err: any) {
+      if (err.message.includes("not found")) return c.json({ error: err.message }, 404);
+      auditLog(db, c, "lifecycle.channel-config", `FAILED: ${err.message}`, id);
       return c.json({ error: err.message }, 500);
     }
   });

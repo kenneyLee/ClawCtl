@@ -29,6 +29,10 @@ vi.mock("../../lifecycle/agent-config.js", () => ({
   removeAgent: vi.fn(),
 }));
 
+vi.mock("../../lifecycle/channel-config.js", () => ({
+  mergeChannelAccountConfig: vi.fn(),
+}));
+
 vi.mock("../../lifecycle/config.js", () => ({
   readRemoteConfig: vi.fn(),
   writeRemoteConfig: vi.fn(),
@@ -50,6 +54,7 @@ import { getProcessStatus, stopProcess, startProcess, restartProcess } from "../
 import { checkNodeVersion, getVersions, streamInstall } from "../../lifecycle/install.js";
 import { readRemoteConfig, writeRemoteConfig } from "../../lifecycle/config.js";
 import { extractModels, mergeAgentConfig, removeAgent } from "../../lifecycle/agent-config.js";
+import { mergeChannelAccountConfig } from "../../lifecycle/channel-config.js";
 
 describe("Lifecycle API routes", () => {
   let app: Hono;
@@ -530,6 +535,60 @@ describe("Lifecycle API routes", () => {
     it("returns 404 for unknown instance", async () => {
       const res = await app.request("/lifecycle/nonexistent/agents/agent-1", { method: "DELETE" });
       expect(res.status).toBe(404);
+    });
+  });
+
+  // ---- Channel config ----
+
+  describe("PUT /:id/channels/config", () => {
+    it("merges channel config and writes back", async () => {
+      const mockConfig = { channels: { telegram: { accounts: { default: { dmPolicy: "open" } } } } };
+      const merged = { channels: { telegram: { accounts: { default: { dmPolicy: "allowlist" } } } } };
+      vi.mocked(readRemoteConfig).mockResolvedValue(mockConfig);
+      vi.mocked(mergeChannelAccountConfig).mockReturnValue(merged);
+      vi.mocked(writeRemoteConfig).mockResolvedValue(undefined);
+
+      const res = await app.request("/lifecycle/ssh-1-main/channels/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channel: "telegram", accountId: "default", config: { dmPolicy: "allowlist" } }),
+      });
+      expect(res.status).toBe(200);
+      const data = await res.json() as any;
+      expect(data.ok).toBe(true);
+    });
+
+    it("returns 404 for unknown instance", async () => {
+      const res = await app.request("/lifecycle/nonexistent/channels/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channel: "telegram", config: {} }),
+      });
+      expect(res.status).toBe(404);
+    });
+
+    it("returns 400 when channel missing", async () => {
+      const res = await app.request("/lifecycle/ssh-1-main/channels/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ config: { dmPolicy: "open" } }),
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it("creates snapshot after config update", async () => {
+      vi.mocked(readRemoteConfig).mockResolvedValue({ channels: { tg: { accounts: { d: {} } } } });
+      vi.mocked(mergeChannelAccountConfig).mockReturnValue({ channels: { tg: { accounts: { d: { dmPolicy: "open" } } } } });
+      vi.mocked(writeRemoteConfig).mockResolvedValue(undefined);
+
+      await app.request("/lifecycle/ssh-1-main/channels/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channel: "tg", accountId: "d", config: { dmPolicy: "open" } }),
+      });
+      const snaps = db.prepare("SELECT * FROM config_snapshots WHERE instance_id = 'ssh-1-main'").all() as any[];
+      expect(snaps).toHaveLength(1);
+      expect(snaps[0].reason).toBe("channel config update");
     });
   });
 
