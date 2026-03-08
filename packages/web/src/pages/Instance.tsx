@@ -1775,120 +1775,138 @@ function ChannelsTab({ inst }: { inst: InstanceInfo }) {
 
       {channels.length === 0 && <p className="text-ink-3 text-sm">No channels configured</p>}
 
-      {/* Channel account cards */}
-      {channels.map((ch: any) =>
-        ch.accounts.map((acc: any) => {
-          const isEditing = editingAccount?.channel === ch.type && editingAccount?.accountId === acc.accountId;
-          const statusLabel = !acc.enabled ? "disabled" : acc.connected ? "connected" : acc.running ? "starting" : acc.lastError ? "error" : "stopped";
-          const statusColor = statusLabel === "connected" ? "bg-ok" : statusLabel === "error" ? "bg-danger" : statusLabel === "starting" ? "bg-warn" : "bg-ink-2";
-
-          return (
-            <div key={`${ch.type}-${acc.accountId}`} className="bg-s1 border border-edge rounded-card shadow-card overflow-hidden">
-              {/* Header */}
-              <div className="flex items-center justify-between p-4 border-b border-edge">
-                <div className="flex items-center gap-2">
-                  <Radio size={16} className="text-ink-3" />
-                  <span className="font-semibold text-ink">{ch.label || ch.type}</span>
-                  <span className="text-ink-3 text-sm">/ {acc.accountId}</span>
-                  {acc.name && <span className="text-ink-2 text-sm">({acc.name})</span>}
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className={`inline-block w-2 h-2 rounded-full ${statusColor}`} />
-                  <span className={`text-xs ${statusLabel === "connected" ? "text-ok" : statusLabel === "error" ? "text-danger" : statusLabel === "starting" ? "text-warn" : "text-ink-2"}`}>
-                    {statusLabel}
-                  </span>
-                </div>
+      {/* Channels grouped by type */}
+      {channels.map((ch: any) => {
+        const connectedCount = ch.accounts.filter((a: any) => a.connected).length;
+        const runningCount = ch.accounts.filter((a: any) => a.running).length;
+        return (
+          <div key={ch.type} className="bg-s1 border border-edge rounded-card shadow-card overflow-hidden">
+            {/* Channel type header */}
+            <div className="flex items-center justify-between p-4 border-b border-edge">
+              <div className="flex items-center gap-2">
+                <Radio size={16} className="text-ink-3" />
+                <span className="font-semibold text-ink">{ch.label || ch.type}</span>
+                <span className="text-ink-3 text-xs">{ch.type}</span>
               </div>
+              <div className="flex items-center gap-3 text-xs">
+                <span className="text-ink-2">{ch.accounts.length} account{ch.accounts.length !== 1 ? "s" : ""}</span>
+                {connectedCount > 0 && <span className="text-ok">{connectedCount} connected</span>}
+                {runningCount > connectedCount && <span className="text-warn">{runningCount - connectedCount} starting</span>}
+                {ch.accounts.length > runningCount && <span className="text-ink-2">{ch.accounts.length - runningCount} stopped</span>}
+              </div>
+            </div>
 
-              {/* Status details */}
-              <div className="p-4 space-y-2 text-sm">
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-                  <div><span className="text-ink-3">Connected:</span> <span className="text-ink">{timeAgo(acc.lastConnectedAt) || "\u2014"}</span></div>
-                  <div><span className="text-ink-3">Last in:</span> <span className="text-ink">{timeAgo(acc.lastInboundAt) || "\u2014"}</span></div>
-                  <div><span className="text-ink-3">Last out:</span> <span className="text-ink">{timeAgo(acc.lastOutboundAt) || "\u2014"}</span></div>
-                  <div><span className="text-ink-3">Reconnects:</span> <span className="text-ink">{acc.reconnectAttempts ?? 0}</span></div>
-                </div>
-                {acc.lastError && (
-                  <div className="text-xs text-danger bg-danger/10 px-2 py-1 rounded">{acc.lastError}</div>
-                )}
+            {/* Account rows */}
+            <div className="divide-y divide-edge/50">
+              {ch.accounts.map((acc: any) => {
+                const isEditing = editingAccount?.channel === ch.type && editingAccount?.accountId === acc.accountId;
+                const statusLabel = !acc.enabled ? "disabled" : acc.connected ? "connected" : acc.running ? "starting" : acc.lastError ? "error" : "stopped";
+                const statusColor = statusLabel === "connected" ? "bg-ok" : statusLabel === "error" ? "bg-danger" : statusLabel === "starting" ? "bg-warn" : "bg-ink-2";
 
-                {/* Policies */}
-                <div className="flex flex-wrap gap-3 text-xs pt-1">
-                  {acc.dmPolicy && <div><span className="text-ink-3">DM:</span> <span className="text-ink">{acc.dmPolicy}</span></div>}
-                  {acc.groupPolicy && <div><span className="text-ink-3">Group:</span> <span className="text-ink">{acc.groupPolicy}</span></div>}
-                  {acc.allowFrom?.length > 0 && (
-                    <div className="flex items-center gap-1 flex-wrap">
-                      <span className="text-ink-3">Allow:</span>
-                      {acc.allowFrom.map((u: string) => (
-                        <span key={u} className="px-1.5 py-0.5 rounded bg-cyan-dim text-cyan text-[10px]">{u}</span>
-                      ))}
+                return (
+                  <div key={acc.accountId} className="p-4">
+                    {/* Account header row */}
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className={`inline-block w-2 h-2 rounded-full ${statusColor}`} />
+                        <span className="text-sm font-medium text-ink">{acc.accountId}</span>
+                        {acc.name && <span className="text-ink-2 text-xs">({acc.name})</span>}
+                        <span className={`text-xs ${statusLabel === "connected" ? "text-ok" : statusLabel === "error" ? "text-danger" : statusLabel === "starting" ? "text-warn" : "text-ink-2"}`}>
+                          {statusLabel}
+                        </span>
+                      </div>
+                      {!isEditing && (
+                        <div className="flex gap-1.5">
+                          <button
+                            onClick={() => startEdit(ch.type, acc.accountId, acc, configChannels)}
+                            className="px-2 py-1 text-xs rounded bg-s2 border border-edge text-ink hover:bg-s3"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => handleToggleEnabled(ch.type, acc.accountId, acc.enabled)}
+                            className="px-2 py-1 text-xs rounded bg-s2 border border-edge text-ink hover:bg-s3"
+                          >
+                            {acc.enabled ? "Disable" : "Enable"}
+                          </button>
+                          <button
+                            onClick={() => handleLogout(ch.type, acc.accountId)}
+                            className="px-2 py-1 text-xs rounded bg-s2 border border-edge text-ink hover:bg-s3 flex items-center gap-1"
+                          >
+                            <LogOut size={12} /> Logout
+                          </button>
+                        </div>
+                      )}
                     </div>
-                  )}
-                  {acc.groupAllowFrom?.length > 0 && (
-                    <div className="flex items-center gap-1 flex-wrap">
-                      <span className="text-ink-3">Group Allow:</span>
-                      {acc.groupAllowFrom.map((g: string) => (
-                        <span key={g} className="px-1.5 py-0.5 rounded bg-cyan-dim text-cyan text-[10px]">{g}</span>
-                      ))}
-                    </div>
-                  )}
-                </div>
 
-                {/* Edit form */}
-                {isEditing && editValues && (
-                  <div className="mt-3 pt-3 border-t border-edge">
-                    <ChannelForm
-                      values={editValues}
-                      onChange={setEditValues}
-                      channelType={ch.type}
-                      accountId={acc.accountId}
-                    />
-                    <div className="flex gap-2 mt-3">
-                      <button
-                        onClick={handleSave}
-                        disabled={saving}
-                        className="px-3 py-1.5 text-sm rounded bg-brand text-white hover:bg-brand-light disabled:opacity-50"
-                      >
-                        {saving ? "Saving..." : "Save"}
-                      </button>
-                      <button
-                        onClick={() => { setEditingAccount(null); setEditValues(null); }}
-                        className="px-3 py-1.5 text-sm rounded bg-s2 border border-edge text-ink hover:bg-s3"
-                      >
-                        Cancel
-                      </button>
+                    {/* Status details */}
+                    <div className="space-y-1.5 text-xs">
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                        <div><span className="text-ink-3">Connected:</span> <span className="text-ink">{timeAgo(acc.lastConnectedAt) || "\u2014"}</span></div>
+                        <div><span className="text-ink-3">Last in:</span> <span className="text-ink">{timeAgo(acc.lastInboundAt) || "\u2014"}</span></div>
+                        <div><span className="text-ink-3">Last out:</span> <span className="text-ink">{timeAgo(acc.lastOutboundAt) || "\u2014"}</span></div>
+                        <div><span className="text-ink-3">Reconnects:</span> <span className="text-ink">{acc.reconnectAttempts ?? 0}</span></div>
+                      </div>
+                      {acc.lastError && (
+                        <div className="text-danger bg-danger/10 px-2 py-1 rounded">{acc.lastError}</div>
+                      )}
+
+                      {/* Policies */}
+                      <div className="flex flex-wrap gap-3 pt-0.5">
+                        {acc.dmPolicy && <div><span className="text-ink-3">DM:</span> <span className="text-ink">{acc.dmPolicy}</span></div>}
+                        {acc.groupPolicy && <div><span className="text-ink-3">Group:</span> <span className="text-ink">{acc.groupPolicy}</span></div>}
+                        {acc.allowFrom?.length > 0 && (
+                          <div className="flex items-center gap-1 flex-wrap">
+                            <span className="text-ink-3">Allow:</span>
+                            {acc.allowFrom.map((u: string) => (
+                              <span key={u} className="px-1.5 py-0.5 rounded bg-cyan-dim text-cyan text-[10px]">{u}</span>
+                            ))}
+                          </div>
+                        )}
+                        {acc.groupAllowFrom?.length > 0 && (
+                          <div className="flex items-center gap-1 flex-wrap">
+                            <span className="text-ink-3">Group Allow:</span>
+                            {acc.groupAllowFrom.map((g: string) => (
+                              <span key={g} className="px-1.5 py-0.5 rounded bg-cyan-dim text-cyan text-[10px]">{g}</span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Edit form */}
+                      {isEditing && editValues && (
+                        <div className="mt-3 pt-3 border-t border-edge">
+                          <ChannelForm
+                            values={editValues}
+                            onChange={setEditValues}
+                            channelType={ch.type}
+                            accountId={acc.accountId}
+                          />
+                          <div className="flex gap-2 mt-3">
+                            <button
+                              onClick={handleSave}
+                              disabled={saving}
+                              className="px-3 py-1.5 text-sm rounded bg-brand text-white hover:bg-brand-light disabled:opacity-50"
+                            >
+                              {saving ? "Saving..." : "Save"}
+                            </button>
+                            <button
+                              onClick={() => { setEditingAccount(null); setEditValues(null); }}
+                              className="px-3 py-1.5 text-sm rounded bg-s2 border border-edge text-ink hover:bg-s3"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
-                )}
-              </div>
-
-              {/* Action buttons */}
-              {!isEditing && (
-                <div className="flex gap-2 px-4 pb-4">
-                  <button
-                    onClick={() => startEdit(ch.type, acc.accountId, acc, configChannels)}
-                    className="px-3 py-1.5 text-xs rounded bg-s2 border border-edge text-ink hover:bg-s3"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    onClick={() => handleToggleEnabled(ch.type, acc.accountId, acc.enabled)}
-                    className="px-3 py-1.5 text-xs rounded bg-s2 border border-edge text-ink hover:bg-s3"
-                  >
-                    {acc.enabled ? "Disable" : "Enable"}
-                  </button>
-                  <button
-                    onClick={() => handleLogout(ch.type, acc.accountId)}
-                    className="px-3 py-1.5 text-xs rounded bg-s2 border border-edge text-ink hover:bg-s3 flex items-center gap-1"
-                  >
-                    <LogOut size={12} /> Logout
-                  </button>
-                </div>
-              )}
+                );
+              })}
             </div>
-          );
-        })
-      )}
+          </div>
+        );
+      })}
 
       <RestartDialog instanceId={inst.id} open={showRestartDialog} onClose={() => setShowRestartDialog(false)} />
     </div>
