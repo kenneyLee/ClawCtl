@@ -1775,8 +1775,16 @@ function ChannelsTab({ inst }: { inst: InstanceInfo }) {
 
       {channels.length === 0 && <p className="text-ink-3 text-sm">No channels configured</p>}
 
-      {/* Channels grouped by type */}
-      {channels.map((ch: any) => {
+      {/* Channels grouped by type, running channels first */}
+      {[...channels].sort((a: any, b: any) => {
+        const aRunning = a.accounts.some((acc: any) => acc.running || acc.connected);
+        const bRunning = b.accounts.some((acc: any) => acc.running || acc.connected);
+        if (aRunning !== bRunning) return aRunning ? -1 : 1;
+        const aEnabled = a.accounts.some((acc: any) => acc.enabled);
+        const bEnabled = b.accounts.some((acc: any) => acc.enabled);
+        if (aEnabled !== bEnabled) return aEnabled ? -1 : 1;
+        return 0;
+      }).map((ch: any) => {
         const connectedCount = ch.accounts.filter((a: any) => a.connected).length;
         const runningCount = ch.accounts.filter((a: any) => a.running).length;
         return (
@@ -1798,7 +1806,10 @@ function ChannelsTab({ inst }: { inst: InstanceInfo }) {
 
             {/* Account rows */}
             <div className="divide-y divide-edge/50">
-              {ch.accounts.map((acc: any) => {
+              {[...ch.accounts].sort((a: any, b: any) => {
+                const score = (x: any) => x.connected ? 3 : x.running ? 2 : x.enabled ? 1 : 0;
+                return score(b) - score(a);
+              }).map((acc: any) => {
                 const isEditing = editingAccount?.channel === ch.type && editingAccount?.accountId === acc.accountId;
                 const statusLabel = !acc.enabled ? "disabled" : acc.connected ? "connected" : acc.running ? "starting" : acc.lastError ? "error" : "stopped";
                 const statusColor = statusLabel === "connected" ? "bg-ok" : statusLabel === "error" ? "bg-danger" : statusLabel === "starting" ? "bg-warn" : "bg-ink-2";
