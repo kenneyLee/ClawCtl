@@ -1,0 +1,19 @@
+{
+  "name": "clawctl",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "clawctl": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsx --no-warnings src/index.ts --build-only 2>/dev/null; echo 'built'",
+    "start": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@clawctl/server": "*",
+    "open": "^10.1.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0"
+  }
+}

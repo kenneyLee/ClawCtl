@@ -1,0 +1,79 @@
+@import "tailwindcss";
+
+@theme {
+  /* Brand — Coral/Orange (lobster!) */
+  --color-brand: #ff6b35;
+  --color-brand-light: #ff8c5a;
+  --color-brand-dim: #ff6b3520;
+
+  /* Deep Sea surfaces */
+  --color-deep: #050a14;
+  --color-base: #0a1020;
+  --color-s1: #111a2e;
+  --color-s2: #1a2540;
+  --color-s3: #243352;
+  --color-s4: #2e4168;
+
+  /* Borders */
+  --color-edge: #1e2d4a;
+  --color-edge-hi: #2a3f6a;
+  --color-edge-modal: #3a5280;
+
+  /* Accent — Cyan (connected/active) */
+  --color-cyan: #00d4ff;
+  --color-cyan-dim: #00d4ff18;
+
+  /* Ink (text) */
+  --color-ink: #e2e8f0;
+  --color-ink-2: #8b9ec2;
+  --color-ink-3: #4a5f8a;
+
+  /* Status */
+  --color-ok: #10b981;
+  --color-ok-dim: #10b98120;
+  --color-warn: #f59e0b;
+  --color-warn-dim: #f59e0b20;
+  --color-danger: #ef4444;
+  --color-danger-dim: #ef444420;
+
+  /* Typography */
+  --font-sans: "DM Sans", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  /* Shadows */
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-glow-brand: 0 0 20px rgba(255, 107, 53, 0.12), 0 0 4px rgba(255, 107, 53, 0.08);
+  --shadow-glow-cyan: 0 0 12px rgba(0, 212, 255, 0.15), 0 0 4px rgba(0, 212, 255, 0.08);
+  --shadow-glow-danger: 0 0 12px rgba(239, 68, 68, 0.15);
+
+  /* Radii */
+  --radius-card: 10px;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-edge);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-edge-hi);
+}
+
+/* Focus ring */
+*:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+
+/* Selection */
+::selection {
+  background: var(--color-brand);
+  color: white;
+}

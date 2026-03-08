@@ -1,0 +1,201 @@
+import { EventEmitter } from "events";
+import type Database from "better-sqlite3";
+import { GatewayClient } from "../gateway/client.js";
+import { discoverLocalInstances } from "./discovery.js";
+import type { GatewayConnection, InstanceInfo } from "../gateway/types.js";
+
+export class InstanceManager extends EventEmitter {
+  private clients = new Map<string, GatewayClient>();
+  private instances = new Map<string, InstanceInfo>();
+  private refreshTimer: ReturnType<typeof setInterval> | null = null;
+  private reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private reconnectAttempts = new Map<string, number>();
+  private db?: Database.Database;
+  onTunnelRebuild?: (id: string) => Promise<string | null>;
+
+  constructor(db?: Database.Database) {
+    super();
+    this.db = db;
+  }
+
+  async init() {
+    // Load persisted instances from DB
+    if (this.db) {
+      const rows = this.db.prepare("SELECT id, url, token, label FROM instances").all() as Array<{ id: string; url: string; token: string | null; label: string | null }>;
+      for (const row of rows) {
+        this.connectInstance({ id: row.id, url: row.url, token: row.token || undefined, label: row.label || undefined, status: "disconnected" });
+      }
+    }
+
+    // Also discover local instances
+    const local = discoverLocalInstances();
+    for (const conn of local) {
+      if (!this.clients.has(conn.id)) {
+        this.persistInstance(conn);
+        this.connectInstance(conn);
+      }
+    }
+  }
+
+  addInstance(conn: GatewayConnection): void {
+    if (this.clients.has(conn.id)) return;
+    this.persistInstance(conn);
+    this.connectInstance(conn);
+  }
+
+  private persistInstance(conn: GatewayConnection) {
+    if (!this.db) return;
+    this.db.prepare(
+      "INSERT OR IGNORE INTO instances (id, url, token, label) VALUES (?, ?, ?, ?)"
+    ).run(conn.id, conn.url, conn.token || null, conn.label || null);
+  }
+
+  private connectInstance(conn: GatewayConnection) {
+    if (this.clients.has(conn.id)) return;
+
+    const client = new GatewayClient(conn);
+    this.clients.set(conn.id, client);
+
+    // Immediately register with empty data so it shows up in the dashboard
+    this.instances.set(conn.id, {
+      id: conn.id,
+      connection: client.conn,
+      agents: [],
+      channels: [],
+      sessions: [],
+      skills: [],
+    });
+    this.emit("change");
+
+    let prevStatus = client.conn.status;
+    client.on("status", () => {
+      const newStatus = client.conn.status;
+      // Log transitions to disconnected/error as potential crash events
+      if (prevStatus === "connected" && (newStatus === "disconnected" || newStatus === "error")) {
+        this.logSystemEvent(conn.id, "instance.disconnected",
+          `Instance ${conn.label || conn.id} went ${newStatus} (was connected)`);
+      }
+      prevStatus = newStatus;
+      this.emit("change");
+      if (newStatus === "disconnected" || newStatus === "error") {
+        this.scheduleReconnect(conn.id);
+      }
+    });
+
+    this.doConnect(conn.id);
+  }
+
+  private doConnect(id: string) {
+    const client = this.clients.get(id);
+    if (!client) return;
+    client.connect()
+      .then(() => client.fetchFullInstance())
+      .then((info) => {
+        this.instances.set(id, info);
+        this.reconnectAttempts.delete(id);
+        this.emit("change");
+      })
+      .catch(() => {});
+  }
+
+  private scheduleReconnect(id: string) {
+    if (this.reconnectTimers.has(id)) return;
+    const attempts = this.reconnectAttempts.get(id) || 0;
+    if (attempts >= 10) return; // wait for next auto-refresh cycle
+    const delay = Math.min(5_000 * Math.pow(2, attempts), 60_000);
+    this.reconnectAttempts.set(id, attempts + 1);
+    const timer = setTimeout(() => {
+      this.reconnectTimers.delete(id);
+      this.reconnect(id);
+    }, delay);
+    this.reconnectTimers.set(id, timer);
+  }
+
+  private async reconnect(id: string) {
+    const client = this.clients.get(id);
+    if (!client) return;
+    // For SSH instances, rebuild the tunnel first
+    if (id.startsWith("ssh-") && this.onTunnelRebuild) {
+      try {
+        const newUrl = await this.onTunnelRebuild(id);
+        if (newUrl) {
+          client.conn.url = newUrl;
+        }
+      } catch { /* proceed with existing URL */ }
+    }
+    this.doConnect(id);
+  }
+
+  removeInstance(id: string) {
+    const timer = this.reconnectTimers.get(id);
+    if (timer) { clearTimeout(timer); this.reconnectTimers.delete(id); }
+    this.reconnectAttempts.delete(id);
+    this.clients.get(id)?.disconnect();
+    this.clients.delete(id);
+    this.instances.delete(id);
+    if (this.db) {
+      this.db.prepare("DELETE FROM instances WHERE id = ?").run(id);
+    }
+    this.emit("change");
+  }
+
+  async refreshInstance(id: string): Promise<InstanceInfo | null> {
+    const client = this.clients.get(id);
+    if (!client || client.conn.status !== "connected") return null;
+    const info = await client.fetchFullInstance();
+    this.instances.set(id, info);
+    this.emit("change");
+    return info;
+  }
+
+  async refreshAll(): Promise<void> {
+    await Promise.allSettled(
+      [...this.clients.keys()].map((id) => this.refreshInstance(id))
+    );
+  }
+
+  startAutoRefresh(intervalMs = 30_000) {
+    this.refreshTimer = setInterval(() => this.refreshAll(), intervalMs);
+  }
+
+  stopAutoRefresh() {
+    if (this.refreshTimer) clearInterval(this.refreshTimer);
+  }
+
+  getAll(): InstanceInfo[] {
+    return [...this.instances.values()];
+  }
+
+  get(id: string): InstanceInfo | undefined {
+    return this.instances.get(id);
+  }
+
+  getClient(id: string): GatewayClient | undefined {
+    return this.clients.get(id);
+  }
+
+  listConnections(): GatewayConnection[] {
+    return [...this.clients.values()].map((c) => c.conn);
+  }
+
+  private logSystemEvent(instanceId: string, type: string, detail: string) {
+    if (!this.db) return;
+    try {
+      this.db.prepare(
+        "INSERT INTO operations (instance_id, type, status, output, operator, finished_at) VALUES (?, ?, 'error', ?, 'system', datetime('now'))"
+      ).run(instanceId, type, detail);
+    } catch { /* DB might not be ready yet during startup */ }
+  }
+
+  shutdown() {
+    this.stopAutoRefresh();
+    for (const timer of this.reconnectTimers.values()) clearTimeout(timer);
+    this.reconnectTimers.clear();
+    this.reconnectAttempts.clear();
+    for (const client of this.clients.values()) {
+      client.disconnect();
+    }
+    this.clients.clear();
+    this.instances.clear();
+  }
+}

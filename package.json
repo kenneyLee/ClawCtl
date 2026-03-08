@@ -1,0 +1,28 @@
+{
+  "name": "clawctl",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:web\"",
+    "dev:server": "npm run dev -w packages/server",
+    "dev:web": "npm run dev -w packages/web",
+    "build": "npm run build -w packages/web && npm run build -w packages/server",
+    "start": "tsx packages/cli/src/index.ts",
+    "test": "vitest run packages/server",
+    "test:unit": "vitest run packages/server",
+    "test:components": "vitest run --config packages/web/vitest.config.ts",
+    "test:e2e": "playwright test --config e2e/playwright.config.ts",
+    "test:live": "vitest run packages/server/src/__tests__/live.test.ts",
+    "test:all": "vitest run packages/server && vitest run --config packages/web/vitest.config.ts"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "concurrently": "^9.1.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

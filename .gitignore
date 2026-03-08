@@ -1,0 +1,35 @@
+node_modules/
+dist/
+.env
+.env.*
+*.db
+*.db-journal
+
+# Credentials - NEVER commit these
+openclaw.json
+*.key
+*.pem
+*.p12
+credentials.json
+secrets.json
+**/config/local.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Test
+e2e/.auth-state.json
+test-results/
+
+# Worktrees
+.worktrees/
+
+# Build
+*.tsbuildinfo

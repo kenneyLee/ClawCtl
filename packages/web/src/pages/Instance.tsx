@@ -1,0 +1,1181 @@
+import { useState, useEffect, useRef } from "react";
+import { useParams, Link, useSearchParams } from "react-router-dom";
+import { ChevronLeft, RefreshCw, ArrowUpDown, Play, Square, RotateCcw, Download, Save, Terminal, Camera, GitCompare, Trash2, Users, Plus } from "lucide-react";
+import { useInstances, type InstanceInfo } from "../hooks/useInstances";
+import { get, post, put } from "../lib/api";
+import { del } from "../lib/api";
+import { AgentForm, type AgentFormValues } from "../components/AgentForm";
+import { TemplateApplyModal } from "../components/TemplateApplyModal";
+import { RestartDialog } from "../components/RestartDialog";
+
+function timeAgo(ts?: number): string {
+  if (!ts) return "";
+  const diff = Date.now() - ts;
+  if (diff < 60_000) return "just now";
+  if (diff < 3600_000) return `${Math.floor(diff / 60_000)}m ago`;
+  if (diff < 86400_000) return `${Math.floor(diff / 3600_000)}h ago`;
+  return `${Math.floor(diff / 86400_000)}d ago`;
+}
+
+function StatusDot({ status }: { status: string }) {
+  const color = status === "connected" ? "bg-ok" : status === "error" ? "bg-danger" : "bg-warn";
+  return <span className={`inline-block w-2 h-2 rounded-full ${color}`} />;
+}
+
+type Tab = "overview" | "sessions" | "config" | "security" | "agents" | "control";
+
+function OverviewTab({ inst }: { inst: InstanceInfo }) {
+  const totalTokens = inst.sessions.reduce((t, s) => t + (s.totalTokens || 0), 0);
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {[
+          { label: "Agents", value: inst.agents.length },
+          { label: "Sessions", value: inst.sessions.length },
+          { label: "Total Tokens", value: totalTokens.toLocaleString() },
+          { label: "Channels", value: inst.channels.length },
+        ].map((s) => (
+          <div key={s.label} className="bg-s1 border border-edge rounded-card p-4 shadow-card">
+            <p className="text-sm text-ink-2">{s.label}</p>
+            <p className="text-xl font-bold text-ink">{s.value}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="bg-s1 border border-edge rounded-card overflow-hidden shadow-card">
+        <h3 className="text-lg font-semibold p-4 border-b border-edge text-ink">Agents</h3>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-edge text-ink-2">
+              <th className="text-left p-3">ID</th>
+              <th className="text-left p-3">Name</th>
+              <th className="text-left p-3">Model</th>
+              <th className="text-left p-3">Thinking</th>
+              <th className="text-left p-3">Default</th>
+            </tr>
+          </thead>
+          <tbody>
+            {inst.agents.map((a) => (
+              <tr key={a.id} className="border-b border-edge/50">
+                <td className="p-3 font-mono">{a.id}</td>
+                <td className="p-3">{a.name || "—"}</td>
+                <td className="p-3"><code className="text-cyan">{a.model || "default"}</code></td>
+                <td className="p-3">{a.thinking ? <span className="text-warn">{a.thinking}</span> : <span className="text-ink-3">—</span>}</td>
+                <td className="p-3">{a.isDefault ? "✓" : ""}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="bg-s1 border border-edge rounded-card overflow-hidden shadow-card">
+        <h3 className="text-lg font-semibold p-4 border-b border-edge text-ink">Channels</h3>
+        <div className="p-4 flex gap-3 flex-wrap">
+          {inst.channels.map((ch) => (
+            <div key={ch.type + (ch.accountId || "")} className={`px-3 py-2 rounded border text-sm ${ch.running ? "border-ok/30 bg-ok-dim" : "border-edge bg-s2"}`}>
+              <span className="font-medium">{ch.type}</span>
+              {ch.accountId && <span className="text-ink-3 ml-1">({ch.accountId})</span>}
+              <span className={`ml-2 text-xs ${ch.running ? "text-ok" : "text-ink-3"}`}>
+                {ch.running ? "running" : ch.enabled ? "stopped" : "disabled"}
+              </span>
+            </div>
+          ))}
+          {inst.channels.length === 0 && <p className="text-ink-3 text-sm">No channels configured</p>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SessionsTab({ inst }: { inst: InstanceInfo }) {
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [messages, setMessages] = useState<any[]>([]);
+  const [loadingMsgs, setLoadingMsgs] = useState(false);
+  const [msgReverse, setMsgReverse] = useState(false);
+  const [sortAsc, setSortAsc] = useState(false);
+  const [msgLimit, setMsgLimit] = useState(50);
+  const [hasMore, setHasMore] = useState(false);
+
+  const sessions = [...inst.sessions].sort((a, b) =>
+    sortAsc ? (a.updatedAt || 0) - (b.updatedAt || 0) : (b.updatedAt || 0) - (a.updatedAt || 0)
+  );
+
+  const loadSession = async (key: string, limit = 50) => {
+    setSelectedKey(key);
+    setMsgLimit(limit);
+    setLoadingMsgs(true);
+    try {
+      const msgs = await get<any[]>(`/instances/${inst.id}/sessions/${key}?limit=${limit}`);
+      setMessages(msgs);
+      setHasMore(msgs.length >= limit);
+    } finally {
+      setLoadingMsgs(false);
+    }
+  };
+
+  const loadMore = () => {
+    if (!selectedKey) return;
+    const next = Math.min(msgLimit * 4, 1000);
+    loadSession(selectedKey, next);
+  };
+
+  return (
+    <div className="flex gap-4 h-[calc(100vh-220px)]">
+      <div className="w-1/3 flex flex-col min-w-0">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-sm text-ink-3">{sessions.length} sessions</span>
+          <button
+            onClick={() => setSortAsc(!sortAsc)}
+            className="flex items-center gap-1 text-xs text-ink-3 hover:text-ink px-1.5 py-0.5 rounded bg-s2"
+            title={sortAsc ? "Oldest first" : "Newest first"}
+          >
+            <ArrowUpDown size={12} />
+            {sortAsc ? "Old" : "New"}
+          </button>
+        </div>
+        <div className="flex-1 overflow-auto space-y-1">
+          {sessions.map((s) => (
+            <button
+              key={s.key}
+              onClick={() => loadSession(s.key)}
+              className={`w-full text-left px-3 py-2 rounded text-sm ${selectedKey === s.key ? "bg-s2 text-ink border-l-2 border-brand" : "text-ink-2 hover:bg-s1/50"}`}
+            >
+              <div className="flex justify-between">
+                <span className="truncate">{s.displayName || s.key.split(":").pop() || s.key}</span>
+                <span className="text-xs text-ink-3 shrink-0 ml-2">{timeAgo(s.updatedAt)}</span>
+              </div>
+              <div className="text-xs text-ink-3">
+                {s.kind}{s.channel ? ` · ${s.channel}` : ""}{s.model ? ` · ${s.model}` : ""}
+                {(s.totalTokens || 0) > 0 && ` · ${s.totalTokens!.toLocaleString()} tok`}
+              </div>
+            </button>
+          ))}
+          {sessions.length === 0 && (
+            inst.connection.status !== "connected" ? (
+              <div className="flex items-center justify-center py-8 text-ink-3 text-sm">
+                <RefreshCw size={14} className="animate-spin mr-2" /> Waiting for connection...
+              </div>
+            ) : (
+              <p className="text-center py-8 text-ink-3 text-sm">No sessions</p>
+            )
+          )}
+        </div>
+      </div>
+      <div className="flex-1 flex flex-col min-w-0">
+        {selectedKey ? (
+          <>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs text-ink-3">{messages.length} message{messages.length !== 1 ? "s" : ""}</span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setMsgReverse(!msgReverse)}
+                  className="flex items-center gap-1 text-xs text-ink-3 hover:text-ink px-1.5 py-0.5 rounded bg-s2"
+                >
+                  <ArrowUpDown size={12} />
+                  {msgReverse ? "New" : "Old"}
+                </button>
+                {hasMore && (
+                  <button onClick={loadMore} className="px-2 py-1 text-xs bg-s3 hover:bg-edge-hi rounded">
+                    Load more
+                  </button>
+                )}
+              </div>
+            </div>
+            {loadingMsgs ? (
+              <div className="flex-1 flex items-center justify-center text-ink-3">Loading messages...</div>
+            ) : (
+            <div className="flex-1 overflow-auto space-y-3">
+              {(msgReverse ? [...messages].reverse() : messages).map((msg, i) => (
+                <div key={i} className={`p-3 rounded text-sm ${msg.role === "user" ? "bg-s2" : "bg-s1 border border-edge"}`}>
+                  <span className="text-xs text-ink-3 uppercase">{msg.role}</span>
+                  <p className="mt-1 whitespace-pre-wrap">{typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content, null, 2)}</p>
+                </div>
+              ))}
+            </div>
+            )}
+          </>
+        ) : (
+          <div className="flex items-center justify-center h-full text-ink-3">Select a session</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ConfigTab({ inst }: { inst: InstanceInfo }) {
+  return (
+    <div className="space-y-6">
+      <div className="bg-s1 border border-edge rounded-card shadow-card">
+        <h3 className="text-lg font-semibold p-4 border-b border-edge text-ink">Configuration</h3>
+        <pre className="p-4 text-xs overflow-auto max-h-[600px] bg-s2 rounded-card m-4">{JSON.stringify(inst.config, null, 2)}</pre>
+      </div>
+
+      {inst.skills.length > 0 && (
+        <div className="bg-s1 border border-edge rounded-card overflow-hidden shadow-card">
+          <h3 className="text-lg font-semibold p-4 border-b border-edge text-ink">Skills ({inst.skills.length})</h3>
+          <div className="p-4 flex gap-2 flex-wrap">
+            {[...inst.skills].sort((a, b) => (a.status === "ready" ? 0 : 1) - (b.status === "ready" ? 0 : 1) || a.name.localeCompare(b.name)).map((sk) => (
+              <span key={sk.name} className={`px-2 py-1 rounded text-xs ${sk.status === "ready" ? "bg-ok-dim text-ok" : "bg-s2 text-ink-3"}`}>
+                {sk.name}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SecurityTab({ inst }: { inst: InstanceInfo }) {
+  const issues = inst.securityAudit || [];
+  const config = (inst.config as any)?.parsed || inst.config as any;
+
+  const channelPolicies: { channel: string; account: string; key: string; value: string }[] = [];
+  const channels = config?.channels || {};
+  for (const [chType, chConf] of Object.entries(channels) as [string, any][]) {
+    if (chConf.dmPolicy) channelPolicies.push({ channel: chType, account: "default", key: "dmPolicy", value: chConf.dmPolicy });
+    if (chConf.groupPolicy) channelPolicies.push({ channel: chType, account: "default", key: "groupPolicy", value: chConf.groupPolicy });
+    if (chConf.enabled !== undefined) channelPolicies.push({ channel: chType, account: "default", key: "enabled", value: String(chConf.enabled) });
+    const accounts = chConf.accounts || {};
+    for (const [accId, accConf] of Object.entries(accounts) as [string, any][]) {
+      if (accConf.dmPolicy) channelPolicies.push({ channel: chType, account: accId, key: "dmPolicy", value: accConf.dmPolicy });
+      if (accConf.groupPolicy) channelPolicies.push({ channel: chType, account: accId, key: "groupPolicy", value: accConf.groupPolicy });
+      if (accConf.enabled !== undefined) channelPolicies.push({ channel: chType, account: accId, key: "enabled", value: String(accConf.enabled) });
+      if (accConf.groupAllowFrom) channelPolicies.push({ channel: chType, account: accId, key: "groupAllowFrom", value: accConf.groupAllowFrom.join(", ") });
+      if (accConf.allowFrom) channelPolicies.push({ channel: chType, account: accId, key: "allowFrom", value: accConf.allowFrom.join(", ") });
+      if (accConf.requireMemberOpenIds?.length) channelPolicies.push({ channel: chType, account: accId, key: "requireMemberOpenIds", value: `${accConf.requireMemberOpenIds.length} IDs` });
+    }
+  }
+
+  const bindings = config?.bindings || [];
+
+  return (
+    <div className="space-y-6">
+      {issues.length > 0 ? (
+        <div className="bg-s1 border border-edge rounded-card shadow-card">
+          <h3 className="text-lg font-semibold p-4 border-b border-edge text-ink">Audit Items</h3>
+          <div className="divide-y divide-edge">
+            {issues.map((item, i) => (
+              <div key={i} className="p-4 flex items-start gap-2">
+                <span className={`px-2 py-0.5 rounded text-xs shrink-0 ${
+                  item.level === "critical" ? "bg-danger-dim text-danger" :
+                  item.level === "warn" ? "bg-warn-dim text-warn" : "bg-cyan-dim text-cyan"
+                }`}>{item.level.toUpperCase()}</span>
+                <div>
+                  <p className="text-sm font-medium text-ink">{item.title}</p>
+                  <p className="text-sm text-ink-2">{item.detail}</p>
+                  {item.fix && <p className="text-sm text-cyan mt-1">Fix: {item.fix}</p>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="bg-ok-dim border border-ok/30 rounded-card p-4 text-ok text-sm">
+          No security audit issues detected
+        </div>
+      )}
+
+      <div className="bg-s1 border border-edge rounded-card overflow-hidden shadow-card">
+        <h3 className="text-lg font-semibold p-4 border-b border-edge text-ink">Agent Permissions</h3>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-edge text-ink-2">
+              <th className="text-left p-3">Agent</th>
+              <th className="text-left p-3">Allowed Tools</th>
+              <th className="text-left p-3">Exec Security</th>
+              <th className="text-left p-3">Risk</th>
+            </tr>
+          </thead>
+          <tbody>
+            {inst.agents.map((a) => {
+              const tools = a.toolsAllow || [];
+              const exec = a.execSecurity;
+              const hasAll = tools.includes("*") || tools.length === 0;
+              const hasExec = hasAll || tools.some((t) => ["exec", "shell", "bash"].includes(t));
+              const isFullExec = hasExec && (!exec || exec.security === "full");
+              const risk = isFullExec ? "high" : hasExec ? "medium" : tools.length > 10 ? "medium" : "low";
+              return (
+                <tr key={a.id} className="border-b border-edge/50">
+                  <td className="p-3">{a.id}{a.isDefault ? " (default)" : ""}</td>
+                  <td className="p-3">{tools.length > 0 ? tools.join(", ") : "all"}</td>
+                  <td className="p-3">
+                    {exec ? (
+                      <div className="space-y-0.5">
+                        <span className={`px-2 py-0.5 rounded text-xs ${
+                          exec.security === "allowlist" ? "bg-ok-dim text-ok" :
+                          exec.security === "full" ? "bg-danger-dim text-danger" : "bg-s2 text-ink-2"
+                        }`}>{exec.security || "—"}</span>
+                        {exec.workspaceOnly && <span className="ml-1 px-1.5 py-0.5 rounded text-xs bg-cyan-dim text-cyan">workspace-only</span>}
+                      </div>
+                    ) : <span className="text-ink-3">—</span>}
+                  </td>
+                  <td className="p-3">
+                    <span className={`px-2 py-0.5 rounded text-xs ${
+                      risk === "high" ? "bg-danger-dim text-danger" :
+                      risk === "medium" ? "bg-warn-dim text-warn" : "bg-ok-dim text-ok"
+                    }`}>{risk}</span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {channelPolicies.length > 0 && (
+        <div className="bg-s1 border border-edge rounded-card overflow-hidden shadow-card">
+          <h3 className="text-lg font-semibold p-4 border-b border-edge text-ink">Channel Policies</h3>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-edge text-ink-2">
+                <th className="text-left p-3">Channel</th>
+                <th className="text-left p-3">Account</th>
+                <th className="text-left p-3">Policy</th>
+                <th className="text-left p-3">Value</th>
+              </tr>
+            </thead>
+            <tbody>
+              {channelPolicies.map((p, i) => (
+                <tr key={i} className="border-b border-edge/50">
+                  <td className="p-3">{p.channel}</td>
+                  <td className="p-3">{p.account}</td>
+                  <td className="p-3 font-mono text-xs">{p.key}</td>
+                  <td className="p-3">
+                    <span className={`px-2 py-0.5 rounded text-xs ${
+                      p.value === "open" ? "bg-danger-dim text-danger" :
+                      p.value === "pairing" ? "bg-warn-dim text-warn" :
+                      p.value === "allowlist" ? "bg-ok-dim text-ok" :
+                      p.value === "true" ? "bg-ok-dim text-ok" :
+                      p.value === "false" ? "bg-s2 text-ink-3" :
+                      "bg-s2 text-ink-2"
+                    }`}>{p.value}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {bindings.length > 0 && (
+        <div className="bg-s1 border border-edge rounded-card overflow-hidden shadow-card">
+          <h3 className="text-lg font-semibold p-4 border-b border-edge text-ink">Agent Bindings</h3>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-edge text-ink-2">
+                <th className="text-left p-3">Agent</th>
+                <th className="text-left p-3">Channel</th>
+                <th className="text-left p-3">Account</th>
+                <th className="text-left p-3">Match</th>
+              </tr>
+            </thead>
+            <tbody>
+              {bindings.map((b: any, i: number) => (
+                <tr key={i} className="border-b border-edge/50">
+                  <td className="p-3 font-mono">{b.agentId}</td>
+                  <td className="p-3">{b.match?.channel || "*"}</td>
+                  <td className="p-3">{b.match?.accountId || "*"}</td>
+                  <td className="p-3 text-xs text-ink-2">
+                    {b.match?.peer ? `${b.match.peer.kind}:${b.match.peer.id}` : "all"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AgentsTab({ inst, initialAgentId }: { inst: InstanceInfo; initialAgentId?: string }) {
+  const [models, setModels] = useState<string[]>([]);
+  const [defaultModel, setDefaultModel] = useState("");
+  const [defaultThinking, setDefaultThinking] = useState("");
+  const [agents, setAgents] = useState<AgentFormValues[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [isNew, setIsNew] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [showRestartDialog, setShowRestartDialog] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      const [cfg, modelData] = await Promise.all([
+        get<any>(`/lifecycle/${inst.id}/config-file`),
+        get<{ models: string[]; defaultModel: string }>(`/lifecycle/${inst.id}/models`),
+      ]);
+      setModels(modelData.models);
+
+      const agentsSection = cfg?.agents || {};
+      const defaults = agentsSection.defaults || {};
+      setDefaultThinking(defaults.thinkingDefault || "");
+      setDefaultModel(defaults.model?.primary || modelData.defaultModel || "");
+
+      const list: any[] = agentsSection.list || [];
+      const mapped = list.map((a: any) => ({
+        id: a.id,
+        model: a.model?.primary || "",
+        thinkingDefault: a.thinkingDefault || "",
+        toolsAllow: a.tools?.allow || [],
+        execSecurity: a.tools?.exec?.security || "",
+        workspace: a.workspace || "",
+        workspaceOnly: a.tools?.exec?.applyPatch?.workspaceOnly || false,
+        fsWorkspaceOnly: a.tools?.fs?.workspaceOnly || false,
+      }));
+      setAgents(mapped);
+      if (mapped.length > 0 && !selectedId) {
+        const target = initialAgentId && mapped.find((a) => a.id === initialAgentId);
+        setSelectedId(target ? target.id : mapped[0].id);
+      }
+    } catch { /* ignore */ }
+    setLoading(false);
+  };
+
+  useEffect(() => { fetchData(); }, [inst.id]);
+
+  const selected = agents.find((a) => a.id === selectedId) || null;
+
+  const updateAgent = (values: AgentFormValues) => {
+    setAgents((prev) => prev.map((a) => a.id === values.id ? values : a));
+  };
+
+  const addNewAgent = () => {
+    const newAgent: AgentFormValues = {
+      id: "",
+      model: "",
+      thinkingDefault: "",
+      toolsAllow: [],
+      execSecurity: "",
+      workspace: "",
+      workspaceOnly: false,
+      fsWorkspaceOnly: false,
+    };
+    setAgents((prev) => [...prev, newAgent]);
+    setSelectedId("");
+    setIsNew(true);
+  };
+
+  const saveAll = async () => {
+    if (isNew && agents.some((a) => !a.id)) {
+      setError("Agent ID is required");
+      return;
+    }
+    const ids = agents.map((a) => a.id);
+    if (new Set(ids).size !== ids.length) {
+      setError("Duplicate agent IDs detected");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await put(`/lifecycle/${inst.id}/agents`, {
+        defaults: { model: defaultModel, thinkingDefault: defaultThinking },
+        agents,
+      });
+      setIsNew(false);
+      setShowRestartDialog(true);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteAgent = async (agentId: string) => {
+    setBusy(true);
+    setError("");
+    try {
+      await del(`/lifecycle/${inst.id}/agents/${agentId}`);
+      setShowDeleteConfirm(null);
+      if (selectedId === agentId) setSelectedId(null);
+      await fetchData();
+      setShowRestartDialog(true);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const applyTemplate = (templateConfig: { toolsAllow: string[]; execSecurity: string; workspaceOnly: boolean }) => {
+    if (!selected) return;
+    updateAgent({
+      ...selected,
+      toolsAllow: templateConfig.toolsAllow,
+      execSecurity: templateConfig.execSecurity,
+      workspaceOnly: templateConfig.workspaceOnly,
+      fsWorkspaceOnly: templateConfig.workspaceOnly,
+    });
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20 text-ink-3 text-sm">
+        <RefreshCw size={16} className="animate-spin mr-2" /> Loading agent config from remote...
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Global Defaults */}
+      <div className="bg-s1 border border-edge rounded-card p-4 shadow-card">
+        <h3 className="text-sm font-semibold text-ink-2 mb-3 flex items-center gap-2">
+          <Users size={16} /> Global Defaults
+        </h3>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs text-ink-3 mb-1">Default Model</label>
+            <input
+              value={defaultModel}
+              onChange={(e) => setDefaultModel(e.target.value)}
+              className="w-full px-3 py-2 text-sm bg-s2 border border-edge rounded text-ink focus:outline-none focus:border-cyan"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-ink-3 mb-1">Default Thinking</label>
+            <input
+              value={defaultThinking}
+              onChange={(e) => setDefaultThinking(e.target.value)}
+              placeholder="e.g. on, off, 1024, budget_tokens..."
+              className="w-full px-3 py-2 text-sm bg-s2 border border-edge rounded text-ink placeholder:text-ink-3 focus:outline-none focus:border-cyan"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Agent list + form */}
+      <div className="bg-s1 border border-edge rounded-card shadow-card flex min-h-[400px]">
+        {/* Sidebar */}
+        <div className="w-48 border-r border-edge">
+          <div className="p-3 border-b border-edge flex items-center justify-between">
+            <span className="text-sm font-semibold text-ink-2">Agents</span>
+            <button onClick={addNewAgent} className="text-brand hover:text-brand-light"><Plus size={16} /></button>
+          </div>
+          <div className="divide-y divide-edge">
+            {agents.map((a) => (
+              <button
+                key={a.id || "__new__"}
+                onClick={() => { setSelectedId(a.id); setIsNew(!a.id); }}
+                className={`w-full text-left px-3 py-2 text-sm ${
+                  selectedId === a.id ? "bg-brand/10 text-brand" : "text-ink hover:bg-s2"
+                }`}
+              >
+                {a.id || "(new agent)"}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Form */}
+        <div className="flex-1 p-4">
+          {selected ? (
+            <>
+              <AgentForm
+                values={selected}
+                onChange={updateAgent}
+                models={models}
+                defaultModel={defaultModel}
+                defaultThinking={defaultThinking}
+                isNew={isNew}
+                onApplyTemplate={() => setShowTemplateModal(true)}
+              />
+              <div className="flex items-center gap-3 mt-6 pt-4 border-t border-edge">
+                <button
+                  onClick={saveAll}
+                  disabled={busy}
+                  className="px-4 py-2 text-sm rounded bg-brand text-white hover:bg-brand-light disabled:opacity-40"
+                >
+                  {busy ? "Saving..." : "Save All"}
+                </button>
+                {!isNew && (
+                  <button
+                    onClick={() => setShowDeleteConfirm(selected.id)}
+                    className="flex items-center gap-1 px-3 py-2 text-sm text-danger hover:text-danger/80"
+                  >
+                    <Trash2 size={14} /> Delete
+                  </button>
+                )}
+                {error && <span className="text-sm text-danger">{error}</span>}
+              </div>
+            </>
+          ) : (
+            <div className="flex items-center justify-center h-full text-ink-3 text-sm">
+              Select an agent or create a new one
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Delete confirm */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-s1 border border-edge rounded-card p-6 shadow-card max-w-sm w-full">
+            <h3 className="text-lg font-semibold text-ink mb-2">Delete Agent</h3>
+            <p className="text-sm text-ink-2 mb-4">
+              Delete agent <strong>{showDeleteConfirm}</strong>? This will also remove associated bindings.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => setShowDeleteConfirm(null)} className="px-4 py-2 text-sm text-ink-3 hover:text-ink">Cancel</button>
+              <button
+                onClick={() => deleteAgent(showDeleteConfirm)}
+                disabled={busy}
+                className="px-4 py-2 text-sm rounded bg-danger text-white hover:bg-danger/80 disabled:opacity-40"
+              >
+                {busy ? "Deleting..." : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <TemplateApplyModal
+        open={showTemplateModal}
+        onClose={() => setShowTemplateModal(false)}
+        onApply={applyTemplate}
+        currentValues={{
+          toolsAllow: selected?.toolsAllow || [],
+          execSecurity: selected?.execSecurity || "",
+          workspaceOnly: selected?.workspaceOnly || false,
+        }}
+      />
+
+      <RestartDialog
+        instanceId={inst.id}
+        open={showRestartDialog}
+        onClose={() => setShowRestartDialog(false)}
+      />
+    </div>
+  );
+}
+
+function ControlTab({ inst }: { inst: InstanceInfo }) {
+  const [status, setStatus] = useState<{ running: boolean; pid?: number } | null>(null);
+  const [versions, setVersions] = useState<{ node: any; openclaw: any } | null>(null);
+  const [configText, setConfigText] = useState("");
+  const [configError, setConfigError] = useState("");
+  const [configDirty, setConfigDirty] = useState(false);
+  const [logs, setLogs] = useState<string[]>([]);
+  const [showLogs, setShowLogs] = useState(false);
+  const [busy, setBusy] = useState("");
+  const logRef = useRef<HTMLDivElement>(null);
+  const [snaps, setSnaps] = useState<any[]>([]);
+  const [snapReason, setSnapReason] = useState("");
+  const [diffResult, setDiffResult] = useState<any>(null);
+  const [diffIds, setDiffIds] = useState<[number|null, number|null]>([null, null]);
+  const [initialLoading, setInitialLoading] = useState(true);
+
+  const fetchStatus = async () => {
+    try {
+      const s = await get<{ running: boolean; pid?: number }>(`/lifecycle/${inst.id}/status`);
+      setStatus(s);
+    } catch { setStatus({ running: false }); }
+  };
+
+  const fetchVersions = async () => {
+    try {
+      const hostId = inst.id.match(/^ssh-(\d+)-/)?.[1] || "local";
+      const v = await get<any>(`/lifecycle/host/${hostId}/versions`);
+      setVersions(v);
+    } catch { /* ignore */ }
+  };
+
+  const fetchConfig = async () => {
+    try {
+      const cfg = await get<any>(`/lifecycle/${inst.id}/config-file`);
+      setConfigText(JSON.stringify(cfg, null, 2));
+      setConfigDirty(false);
+      setConfigError("");
+    } catch (e: any) {
+      setConfigError(e.message || "Failed to load config");
+    }
+  };
+
+  const fetchSnaps = async () => {
+    try { setSnaps(await get<any[]>(`/lifecycle/${inst.id}/snapshots`)); } catch {}
+  };
+
+  useEffect(() => {
+    Promise.all([fetchStatus(), fetchVersions(), fetchConfig(), fetchSnaps()])
+      .finally(() => setInitialLoading(false));
+    const timer = setInterval(fetchStatus, 10_000);
+    return () => clearInterval(timer);
+  }, [inst.id]);
+
+  const doAction = async (action: string) => {
+    setBusy(action);
+    try {
+      await post(`/lifecycle/${inst.id}/${action}`);
+      await fetchStatus();
+    } finally { setBusy(""); }
+  };
+
+  const saveConfig = async () => {
+    try {
+      JSON.parse(configText);
+    } catch {
+      setConfigError("Invalid JSON");
+      return;
+    }
+    setBusy("config");
+    try {
+      await put(`/lifecycle/${inst.id}/config-file`, JSON.parse(configText));
+      setConfigDirty(false);
+      setConfigError("");
+    } catch (e: any) {
+      setConfigError(e.message);
+    } finally { setBusy(""); }
+  };
+
+  const [installVersion, setInstallVersion] = useState("");
+  const [installSteps, setInstallSteps] = useState<Array<{ step: string; status: string; detail?: string }>>([]);
+
+  const doInstall = async () => {
+    const hostId = inst.id.match(/^ssh-(\d+)-/)?.[1] || "local";
+    setBusy("install");
+    setInstallSteps([]);
+    try {
+      const res = await fetch(`/api/lifecycle/host/${hostId}/install`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ version: installVersion || undefined }),
+      });
+      const reader = res.body?.getReader();
+      if (reader) {
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            try {
+              const msg = JSON.parse(line.slice(6));
+              if (msg.done !== undefined) break;
+              setInstallSteps((prev) => {
+                const idx = prev.findIndex((s) => s.step === msg.step);
+                if (idx >= 0) { const next = [...prev]; next[idx] = msg; return next; }
+                return [...prev, msg];
+              });
+            } catch { /* ignore */ }
+          }
+        }
+      }
+      await fetchVersions();
+    } finally { setBusy(""); }
+  };
+
+  const toggleLogs = async () => {
+    if (showLogs) { setShowLogs(false); return; }
+    setShowLogs(true);
+    setLogs([]);
+    try {
+      const res = await fetch(`/api/lifecycle/${inst.id}/logs?lines=50`, { credentials: "include" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Failed to fetch logs" }));
+        setLogs([`Error: ${(err as any).error || res.statusText}`]);
+        return;
+      }
+      const reader = res.body?.getReader();
+      if (!reader) return;
+      const decoder = new TextDecoder();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const text = decoder.decode(value);
+        const lines = text.split("\n").filter(l => l.startsWith("data: ")).map(l => {
+          try { return JSON.parse(l.slice(6)); } catch { return l.slice(6); }
+        });
+        if (lines.length) {
+          setLogs(prev => [...prev, ...lines].slice(-500));
+          logRef.current?.scrollTo(0, logRef.current.scrollHeight);
+        }
+      }
+    } catch { /* stream ended */ }
+  };
+
+  const createSnapshot = async () => {
+    setBusy("snapshot");
+    try {
+      await post(`/lifecycle/${inst.id}/snapshots`, { configJson: configText, reason: snapReason || undefined });
+      setSnapReason("");
+      await fetchSnaps();
+    } finally { setBusy(""); }
+  };
+
+  const doDiff = async () => {
+    if (diffIds[0] === null || diffIds[1] === null) return;
+    try {
+      const result = await post<any>("/lifecycle/snapshots/diff", { id1: diffIds[0], id2: diffIds[1] });
+      setDiffResult(result);
+    } catch {}
+  };
+
+  const doCleanup = async () => {
+    try {
+      await post(`/lifecycle/${inst.id}/snapshots/cleanup`, { keepCount: 10 });
+      await fetchSnaps();
+    } catch {}
+  };
+
+  const restoreSnapshot = async (snapId: number) => {
+    if (!confirm(`Restore config from snapshot #${snapId}? This will overwrite the current remote config.`)) return;
+    setBusy("restore");
+    try {
+      await post(`/lifecycle/${inst.id}/snapshots/${snapId}/restore`, {});
+      await fetchSnaps();
+      // Refresh the config display
+      try {
+        const cfg = await get<any>(`/lifecycle/${inst.id}/config-file`);
+        setConfigText(JSON.stringify(cfg, null, 2));
+      } catch {}
+    } finally { setBusy(""); }
+  };
+
+  if (initialLoading) {
+    return (
+      <div className="flex items-center justify-center py-20 text-ink-3 text-sm">
+        <RefreshCw size={16} className="animate-spin mr-2" /> Loading lifecycle data from remote...
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Process Control */}
+      <div className="bg-s1 border border-edge rounded-card p-4 shadow-card">
+        <h3 className="text-sm font-semibold text-ink-2 uppercase tracking-wider mb-3">Process Control</h3>
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <span className={`inline-block w-3 h-3 rounded-full ${status === null ? "bg-ink-3 animate-pulse" : status.running ? "bg-ok shadow-glow-cyan" : "bg-ink-3"}`} />
+            <span className="text-ink font-medium">
+              {status === null ? "Checking status..." : status.running ? (status.pid ? `Running (PID ${status.pid})` : "Running") : "Stopped"}
+            </span>
+          </div>
+          <div className="flex gap-2 ml-auto">
+            <button
+              onClick={() => doAction("start")}
+              disabled={!!busy || status?.running === true}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded bg-ok/20 text-ok hover:bg-ok/30 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Play size={14} /> Start
+            </button>
+            <button
+              onClick={() => doAction("stop")}
+              disabled={!!busy || !status?.running}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded bg-danger/20 text-danger hover:bg-danger/30 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Square size={14} /> Stop
+            </button>
+            <button
+              onClick={() => doAction("restart")}
+              disabled={!!busy}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded bg-warn/20 text-warn hover:bg-warn/30 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <RotateCcw size={14} /> Restart
+            </button>
+          </div>
+        </div>
+        {busy && ["start", "stop", "restart"].includes(busy) && (
+          <p className="mt-2 text-sm text-ink-3 animate-pulse">Processing {busy}...</p>
+        )}
+      </div>
+
+      {/* Version & Upgrade */}
+      <div className="bg-s1 border border-edge rounded-card p-4 shadow-card">
+        <h3 className="text-sm font-semibold text-ink-2 uppercase tracking-wider mb-3">Version</h3>
+        <div className="flex items-center gap-6">
+          <div>
+            <span className="text-xs text-ink-3">Installed</span>
+            <p className="font-mono text-ink">{versions?.openclaw?.installed || inst.version || "not found"}</p>
+          </div>
+          <div>
+            <span className="text-xs text-ink-3">Latest</span>
+            <p className="font-mono text-ink">{versions?.openclaw?.latest || (versions ? "unknown" : "...")}</p>
+          </div>
+          <div>
+            <span className="text-xs text-ink-3">Node.js</span>
+            <p className={`font-mono ${!versions ? "text-ink-3" : versions.node?.sufficient ? "text-ok" : "text-danger"}`}>
+              {versions?.node?.version || (versions ? "not found" : "...")}
+            </p>
+          </div>
+          {versions?.openclaw?.distTags && (
+            <div className="ml-auto flex items-center gap-2">
+              <select
+                value={installVersion}
+                onChange={(e) => setInstallVersion(e.target.value)}
+                className="bg-s2 border border-edge rounded px-2 py-1.5 text-sm text-ink"
+              >
+                {Object.entries(versions.openclaw.distTags as Record<string, string>)
+                  .sort(([a], [b]) => a === "latest" ? -1 : b === "latest" ? 1 : a.localeCompare(b))
+                  .map(([tag, ver]) => (
+                  <option key={tag} value={ver}>
+                    {tag === "latest" ? `${ver} (stable)` : `${ver} (${tag})`}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={doInstall}
+                disabled={!!busy || (versions?.openclaw?.installed === installVersion)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded bg-brand/20 text-brand hover:bg-brand/30 disabled:opacity-40"
+              >
+                <Download size={14} /> {versions?.openclaw?.installed ? "Upgrade" : "Install"}
+              </button>
+            </div>
+          )}
+        </div>
+        {installSteps.length > 0 && (
+          <div className="mt-3 pt-3 border-t border-edge space-y-1">
+            {installSteps.map((s, i) => (
+              <div key={i} className="flex items-start gap-1.5 text-xs">
+                <span className="shrink-0">{s.status === "running" ? "⏳" : s.status === "done" ? "✅" : s.status === "error" ? "❌" : "⏭️"}</span>
+                <span className={s.status === "error" ? "text-danger" : s.status === "done" ? "text-ok" : "text-ink-2"}>
+                  {s.step}{s.detail ? ` — ${s.detail}` : ""}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Config Editor */}
+      <div className="bg-s1 border border-edge rounded-card shadow-card">
+        <div className="flex items-center justify-between p-4 border-b border-edge">
+          <h3 className="text-sm font-semibold text-ink-2 uppercase tracking-wider">Configuration File</h3>
+          <button
+            onClick={saveConfig}
+            disabled={!configDirty || !!busy}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded bg-brand text-white hover:bg-brand-light disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <Save size={14} /> Save
+          </button>
+        </div>
+        <textarea
+          value={configText}
+          onChange={(e) => { setConfigText(e.target.value); setConfigDirty(true); setConfigError(""); }}
+          className="w-full h-80 p-4 bg-s2 text-sm font-mono text-ink border-0 focus:outline-none resize-none"
+          spellCheck={false}
+        />
+        {configError && <p className="px-4 py-2 text-sm text-danger">{configError}</p>}
+      </div>
+
+      {/* Config Snapshots */}
+      <div className="bg-s1 border border-edge rounded-card shadow-card">
+        <div className="flex items-center justify-between p-4 border-b border-edge">
+          <h3 className="text-sm font-semibold text-ink-2 uppercase tracking-wider">Config Snapshots</h3>
+          <div className="flex gap-2">
+            <input
+              value={snapReason}
+              onChange={(e) => setSnapReason(e.target.value)}
+              placeholder="Reason (optional)"
+              className="px-2 py-1 text-sm bg-s2 border border-edge rounded text-ink placeholder:text-ink-3 w-40"
+            />
+            <button
+              onClick={createSnapshot}
+              disabled={!configText || !!busy}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded bg-brand/20 text-brand hover:bg-brand/30 disabled:opacity-40"
+            >
+              <Camera size={14} /> Snapshot
+            </button>
+          </div>
+        </div>
+
+        {snaps.length > 0 ? (
+          <div className="divide-y divide-edge">
+            {snaps.slice(0, 20).map((s) => (
+              <div key={s.id} className="flex items-center gap-3 px-4 py-2 text-sm">
+                <span className="font-mono text-ink-3">#{s.id}</span>
+                <span className="text-ink">{s.reason || "—"}</span>
+                <span className="text-xs text-ink-3 ml-auto">{s.created_at}</span>
+                <button
+                  onClick={() => restoreSnapshot(s.id)}
+                  disabled={!!busy}
+                  className="flex items-center gap-1 px-2 py-0.5 text-xs rounded bg-s2 text-ink-3 hover:text-warn hover:bg-warn/10 disabled:opacity-40"
+                  title="Restore this snapshot to remote"
+                >
+                  <RotateCcw size={11} /> Restore
+                </button>
+                <button
+                  onClick={() => setDiffIds(prev => prev[0] === null ? [s.id, prev[1]] : [prev[0], s.id])}
+                  className={`px-2 py-0.5 text-xs rounded ${
+                    diffIds.includes(s.id) ? "bg-brand text-white" : "bg-s2 text-ink-3 hover:text-ink"
+                  }`}
+                >
+                  {diffIds[0] === s.id ? "A" : diffIds[1] === s.id ? "B" : "Select"}
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="p-4 text-sm text-ink-3">No snapshots yet. Take one to track config changes.</p>
+        )}
+
+        {/* Diff controls */}
+        {(diffIds[0] !== null || diffIds[1] !== null) && (
+          <div className="border-t border-edge p-4">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-ink-2">
+                Comparing: #{diffIds[0] ?? "?"} vs #{diffIds[1] ?? "?"}
+              </span>
+              <button
+                onClick={doDiff}
+                disabled={diffIds[0] === null || diffIds[1] === null}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded bg-cyan/20 text-cyan hover:bg-cyan/30 disabled:opacity-40"
+              >
+                <GitCompare size={14} /> Compare
+              </button>
+              <button
+                onClick={() => { setDiffIds([null, null]); setDiffResult(null); }}
+                className="px-2 py-1 text-xs text-ink-3 hover:text-ink"
+              >
+                Clear
+              </button>
+            </div>
+            {diffResult && (
+              <div className="mt-3 bg-s2 rounded p-3 text-sm font-mono overflow-auto max-h-60">
+                {diffResult.changes.length === 0 ? (
+                  <p className="text-ok">No differences found</p>
+                ) : (
+                  diffResult.changes.map((ch: any, i: number) => (
+                    <div key={i} className="mb-1">
+                      <span className="text-ink-2">{ch.path}: </span>
+                      <span className="text-danger">{JSON.stringify(ch.before)}</span>
+                      <span className="text-ink-3"> → </span>
+                      <span className="text-ok">{JSON.stringify(ch.after)}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Cleanup */}
+        {snaps.length > 10 && (
+          <div className="border-t border-edge px-4 py-2 flex justify-end">
+            <button
+              onClick={doCleanup}
+              className="flex items-center gap-1.5 px-2 py-1 text-xs text-ink-3 hover:text-danger"
+            >
+              <Trash2 size={12} /> Clean old snapshots
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Logs */}
+      <div className="bg-s1 border border-edge rounded-card shadow-card">
+        <div className="flex items-center justify-between p-4 border-b border-edge">
+          <h3 className="text-sm font-semibold text-ink-2 uppercase tracking-wider">Logs</h3>
+          <button
+            onClick={toggleLogs}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded bg-s2 text-ink-2 hover:text-ink hover:bg-s3"
+          >
+            <Terminal size={14} /> {showLogs ? "Hide" : "Stream Logs"}
+          </button>
+        </div>
+        {showLogs && (
+          <div ref={logRef} className="h-64 overflow-auto p-4 bg-deep font-mono text-xs text-ink-2 whitespace-pre-wrap">
+            {logs.length === 0 ? (
+              <span className="text-ink-3 animate-pulse">Waiting for log output...</span>
+            ) : (
+              logs.map((line, i) => <div key={i}>{line}</div>)
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function Instance() {
+  const { id } = useParams<{ id: string }>();
+  const { instances, loading, refresh } = useInstances();
+  const [activeTab, setActiveTab] = useState<Tab>("overview");
+  const [searchParams] = useSearchParams();
+
+  useEffect(() => {
+    const tab = searchParams.get("tab") as Tab;
+    if (tab && ["overview", "sessions", "config", "security", "agents", "control"].includes(tab)) {
+      setActiveTab(tab);
+    }
+  }, [searchParams]);
+
+  const inst = instances.find((i) => i.id === id);
+
+  if (!inst) {
+    if (loading) {
+      return (
+        <div className="flex items-center justify-center h-full text-ink-3 text-sm">
+          <svg className="animate-spin h-4 w-4 mr-2" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" /></svg>
+          Loading instance...
+        </div>
+      );
+    }
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-ink-3">
+        <p className="text-lg mb-2">Instance not found</p>
+        <Link to="/" className="text-cyan hover:underline text-sm">Back to Dashboard</Link>
+      </div>
+    );
+  }
+
+  const tabs: { key: Tab; label: string }[] = [
+    { key: "overview", label: "Overview" },
+    { key: "sessions", label: `Sessions (${inst.sessions.length})` },
+    { key: "config", label: "Config" },
+    { key: "security", label: "Security" },
+    { key: "agents", label: `Agents (${inst.agents.length})` },
+    { key: "control", label: "Control" },
+  ];
+
+  return (
+    <div className="h-full flex">
+      {/* Main content */}
+      <div className="flex-1 flex flex-col min-w-0">
+        <div className="flex items-center gap-3 mb-4">
+          <Link to="/" className="text-ink-3 hover:text-ink"><ChevronLeft size={20} /></Link>
+          <StatusDot status={inst.connection.status} />
+          <h1 className="text-2xl font-bold text-ink">{inst.connection.label || inst.id}</h1>
+          {inst.version && <span className="text-sm text-ink-3">v{inst.version}</span>}
+          <button
+            onClick={() => post(`/instances/${inst.id}/refresh`).then(refresh)}
+            className="text-ink-3 hover:text-ink text-sm ml-2"
+          ><RefreshCw size={16} /></button>
+        </div>
+
+        <div className="flex gap-1 mb-4 border-b border-edge pb-0">
+          {tabs.map((t) => (
+            <button
+              key={t.key}
+              onClick={() => setActiveTab(t.key)}
+              className={`px-3 py-1.5 text-sm ${activeTab === t.key ? "border-b-2 border-brand text-brand" : "text-ink-3 hover:text-ink-2"}`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex-1 overflow-auto">
+          {activeTab === "overview" && <OverviewTab inst={inst} />}
+          {activeTab === "sessions" && <SessionsTab inst={inst} />}
+          {activeTab === "config" && <ConfigTab inst={inst} />}
+          {activeTab === "security" && <SecurityTab inst={inst} />}
+          {activeTab === "agents" && <AgentsTab inst={inst} initialAgentId={searchParams.get("agent") || undefined} />}
+          {activeTab === "control" && <ControlTab inst={inst} />}
+        </div>
+      </div>
+    </div>
+  );
+}

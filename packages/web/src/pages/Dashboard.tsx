@@ -1,0 +1,648 @@
+import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import { RefreshCw, Plus, X, Download } from "lucide-react";
+import { ReactFlow, type Node, type Edge, Background, Controls } from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
+import { useInstances, type InstanceInfo } from "../hooks/useInstances";
+import { useAuth } from "../hooks/useAuth";
+import { get, post } from "../lib/api";
+
+interface RemoteHost {
+  id: number;
+  label: string;
+  host: string;
+  port: number;
+  username: string;
+  authMethod: "password" | "privateKey";
+  last_scan_at: string | null;
+  last_scan_error: string | null;
+}
+
+function StatusDot({ status }: { status: string }) {
+  const color = status === "connected" ? "bg-ok" : status === "error" ? "bg-danger" : "bg-warn";
+  return (
+    <span className="relative inline-flex h-2 w-2">
+      {status === "connected" && (
+        <span className="absolute inline-flex h-full w-full animate-pulse rounded-full bg-ok/40" />
+      )}
+      <span className={`relative inline-block w-2 h-2 rounded-full ${color}`} />
+    </span>
+  );
+}
+
+function InstanceCard({ inst, onRefresh }: { inst: InstanceInfo; onRefresh: () => void }) {
+  const navigate = useNavigate();
+  const totalTokens = inst.sessions.reduce((t, s) => t + (s.totalTokens || 0), 0);
+  const criticalCount = inst.securityAudit?.filter((a) => a.level === "critical").length || 0;
+
+  return (
+    <div
+      className="bg-s1 border border-edge rounded-card p-4 hover:border-edge-hi transition-colors cursor-pointer shadow-card"
+      onClick={() => navigate(`/instance/${inst.id}`)}
+    >
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <StatusDot status={inst.connection.status} />
+          <h3 className="font-semibold text-ink">{inst.connection.label || inst.id}</h3>
+          {inst.version && <span className="font-mono text-xs text-ink-3">v{inst.version}</span>}
+        </div>
+        <button
+          onClick={(e) => { e.stopPropagation(); onRefresh(); }}
+          className="text-ink-3 hover:text-ink transition-colors"
+        >
+          <RefreshCw size={14} />
+        </button>
+      </div>
+      <div className="space-y-1.5 text-sm text-ink-2">
+        <div className="flex gap-2 flex-wrap">
+          {inst.channels.map((ch) => (
+            <span
+              key={ch.type + ch.accountId}
+              className={`px-2 py-0.5 rounded text-xs ${ch.running ? "bg-cyan-dim text-cyan" : "bg-s2 text-ink-3"}`}
+            >
+              {ch.type}
+            </span>
+          ))}
+        </div>
+        <p>
+          {inst.agents.length} agent{inst.agents.length !== 1 ? "s" : ""}
+          {" · "}{inst.sessions.length} session{inst.sessions.length !== 1 ? "s" : ""}
+          {totalTokens > 0 && <>{" · "}<span className="text-cyan">{totalTokens.toLocaleString()} tokens</span></>}
+        </p>
+        {criticalCount > 0 && (
+          <p className="text-danger">{criticalCount} critical issue{criticalCount !== 1 ? "s" : ""}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TopologyView({ instances }: { instances: InstanceInfo[] }) {
+  const nodes: Node[] = [
+    {
+      id: "hub",
+      position: { x: 300, y: 250 },
+      data: { label: "ClawCtl Hub" },
+      style: {
+        background: "#818cf8",
+        color: "#fff",
+        border: "2px solid #6366f1",
+        borderRadius: "50%",
+        width: 90,
+        height: 90,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontSize: "13px",
+        fontWeight: 700,
+      },
+    },
+  ];
+
+  const edges: Edge[] = [];
+  const radius = 200;
+  const cx = 300, cy = 250;
+
+  instances.forEach((inst, i) => {
+    const angle = (2 * Math.PI * i) / instances.length - Math.PI / 2;
+    const x = cx + radius * Math.cos(angle);
+    const y = cy + radius * Math.sin(angle);
+    const statusColor = inst.connection.status === "connected" ? "#22d3ee"
+      : inst.connection.status === "error" ? "#f87171" : "#fbbf24";
+
+    nodes.push({
+      id: inst.id,
+      position: { x: x - 60, y: y - 30 },
+      data: {
+        label: (
+          <div style={{ textAlign: "center" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, marginBottom: 2 }}>
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: statusColor, display: "inline-block" }} />
+              <span style={{ fontWeight: 600, fontSize: 11 }}>{inst.connection.label || inst.id}</span>
+            </div>
+            <div style={{ fontSize: 10, color: "#94a3b8" }}>
+              {inst.agents.length}A · {inst.sessions.length}S
+              {inst.version ? ` · v${inst.version}` : ""}
+            </div>
+          </div>
+        ),
+      },
+      style: {
+        background: "#111827",
+        border: `1px solid ${statusColor}`,
+        borderRadius: "8px",
+        padding: "8px 12px",
+        fontSize: "12px",
+        color: "#e2e8f0",
+        minWidth: 120,
+      },
+    });
+
+    edges.push({
+      id: `hub-${inst.id}`,
+      source: "hub",
+      target: inst.id,
+      animated: inst.connection.status === "connected",
+      style: { stroke: statusColor, strokeWidth: 1.5 },
+    });
+  });
+
+  return (
+    <div className="bg-s1 border border-edge rounded-card shadow-card overflow-hidden" style={{ height: 500 }}>
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        fitView
+        proOptions={{ hideAttribution: true }}
+        style={{ background: "#0a0f1a" }}
+      >
+        <Background color="#1e293b" gap={20} />
+        <Controls
+          style={{ background: "#1e293b", borderColor: "#334155", color: "#94a3b8" }}
+        />
+      </ReactFlow>
+    </div>
+  );
+}
+
+function AddInstanceDialog({ onClose, onAdd, isAdmin }: { onClose: () => void; onAdd: (url: string, token?: string, label?: string) => void; isAdmin: boolean }) {
+  const [tab, setTab] = useState<"instance" | "host">("instance");
+  // Instance tab
+  const [url, setUrl] = useState("");
+  const [token, setToken] = useState("");
+  const [label, setLabel] = useState("");
+  // Host tab
+  const [hostLabel, setHostLabel] = useState("");
+  const [hostAddr, setHostAddr] = useState("");
+  const [hostPort, setHostPort] = useState("22");
+  const [hostUser, setHostUser] = useState("ubuntu");
+  const [hostAuth, setHostAuth] = useState<"password" | "privateKey">("password");
+  const [hostCred, setHostCred] = useState("");
+  const [hostBusy, setHostBusy] = useState(false);
+  const [hostMsg, setHostMsg] = useState<string | null>(null);
+
+  const inputCls = "w-full bg-s4 border border-edge-modal rounded-lg px-3 py-2.5 text-sm text-ink placeholder:text-ink-3 focus:border-brand transition-colors";
+
+  const [hostDone, setHostDone] = useState(false);
+
+  const addHost = async () => {
+    setHostBusy(true); setHostMsg(null);
+    try {
+      const created = await post<{ id: number }>("/hosts", {
+        label: hostLabel || hostAddr, host: hostAddr,
+        port: parseInt(hostPort) || 22, username: hostUser,
+        authMethod: hostAuth, credential: hostCred,
+      });
+      // Auto-scan after adding
+      const scan = await post<{ discovered: number; added: number }>(`/hosts/${created.id}/scan`, {});
+      if (scan.discovered > 0) {
+        setHostMsg(`Host added successfully. Found ${scan.discovered} instance(s).`);
+      } else {
+        setHostMsg("Host added. No OpenClaw instances found — go to Settings > Remote Hosts to install OpenClaw on this host.");
+      }
+      setHostDone(true);
+    } catch (e: any) { setHostMsg(`Error: ${e.message}`); }
+    finally { setHostBusy(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-deep/60 backdrop-blur-sm flex items-center justify-center z-50" onClick={onClose}>
+      <div className="bg-s3 border border-edge-modal rounded-card p-6 w-[28rem] shadow-[0_8px_32px_rgba(0,0,0,0.5)] relative" onClick={(e) => e.stopPropagation()}>
+        {/* Close X */}
+        <button onClick={onClose} className="absolute top-4 right-4 text-ink-3 hover:text-ink transition-colors" aria-label="Close">
+          <X size={18} />
+        </button>
+        {/* Tabs */}
+        <div className="flex gap-1 mb-4 bg-s4 rounded-lg p-0.5 mr-6">
+          <button
+            onClick={() => setTab("instance")}
+            className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-colors ${tab === "instance" ? "bg-s3 text-ink shadow-sm" : "text-ink-3 hover:text-ink"}`}
+          >
+            Remote Instance
+          </button>
+          {isAdmin && (
+            <button
+              onClick={() => setTab("host")}
+              className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-colors ${tab === "host" ? "bg-s3 text-ink shadow-sm" : "text-ink-3 hover:text-ink"}`}
+            >
+              SSH Host
+            </button>
+          )}
+        </div>
+
+        {tab === "instance" ? (
+          <div className="space-y-3">
+            <div>
+              <label className="block text-sm text-ink-2 mb-1">WebSocket URL</label>
+              <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="ws://host:18789" className={inputCls} />
+            </div>
+            <div>
+              <label className="block text-sm text-ink-2 mb-1">Token (optional)</label>
+              <input value={token} onChange={(e) => setToken(e.target.value)} type="password" className={inputCls} />
+            </div>
+            <div>
+              <label className="block text-sm text-ink-2 mb-1">Label</label>
+              <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. Production Lark" className={inputCls} />
+            </div>
+            <div className="flex gap-2 justify-end pt-2">
+              <button onClick={onClose} className="px-4 py-2 text-sm text-ink-2 hover:text-ink transition-colors">Cancel</button>
+              <button
+                onClick={() => { onAdd(url, token || undefined, label || undefined); onClose(); }}
+                className="px-4 py-2 text-sm bg-brand hover:bg-brand-light rounded-card text-white font-semibold shadow-glow-brand transition-colors"
+                disabled={!url}
+              >
+                Add
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-xs text-ink-3">Add an SSH host, auto-scan for OpenClaw instances. Install from Settings if not found.</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-ink-2 mb-1">Label</label>
+                <input value={hostLabel} onChange={(e) => setHostLabel(e.target.value)} placeholder="Production Server" className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-xs text-ink-2 mb-1">Host</label>
+                <input value={hostAddr} onChange={(e) => setHostAddr(e.target.value)} placeholder="192.168.1.100" className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-xs text-ink-2 mb-1">Port</label>
+                <input value={hostPort} onChange={(e) => setHostPort(e.target.value)} className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-xs text-ink-2 mb-1">Username</label>
+                <input value={hostUser} onChange={(e) => setHostUser(e.target.value)} placeholder="ubuntu" className={inputCls} />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs text-ink-2 mb-1">Auth Method</label>
+              <select value={hostAuth} onChange={(e) => setHostAuth(e.target.value as "password" | "privateKey")} className={inputCls}>
+                <option value="password">Password</option>
+                <option value="privateKey">Private Key (paste content)</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-ink-2 mb-1">{hostAuth === "password" ? "Password" : "Private Key"}</label>
+              {hostAuth === "password"
+                ? <input type="password" value={hostCred} onChange={(e) => setHostCred(e.target.value)} className={inputCls} />
+                : <textarea value={hostCred} onChange={(e) => setHostCred(e.target.value)} rows={3} placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" className={`${inputCls} font-mono`} />
+              }
+            </div>
+            {hostMsg && (
+              <div className={`p-3 rounded-lg border text-sm ${
+                hostMsg.startsWith("Error")
+                  ? "bg-danger/10 border-danger/30 text-danger"
+                  : hostMsg.includes("No OpenClaw")
+                    ? "bg-warn/10 border-warn/30 text-warn"
+                    : "bg-ok/10 border-ok/30 text-ok"
+              }`}>
+                {hostMsg}
+              </div>
+            )}
+            <div className="flex gap-2 justify-end pt-2">
+              {hostDone ? (
+                <button onClick={onClose} className="px-4 py-2 text-sm bg-brand hover:bg-brand-light rounded-card text-white font-semibold shadow-glow-brand transition-colors">
+                  Close
+                </button>
+              ) : (
+                <>
+                  <button onClick={onClose} className="px-4 py-2 text-sm text-ink-2 hover:text-ink transition-colors">Cancel</button>
+                  <button
+                    onClick={addHost}
+                    className="px-4 py-2 text-sm bg-brand hover:bg-brand-light rounded-card text-white font-semibold shadow-glow-brand transition-colors"
+                    disabled={!hostAddr || !hostUser || !hostCred || hostBusy}
+                  >
+                    {hostBusy ? "Adding..." : "Add & Scan"}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function groupByHost(instances: InstanceInfo[]): { hostKey: string; hostLabel: string; instances: InstanceInfo[] }[] {
+  const groups = new Map<string, InstanceInfo[]>();
+  for (const inst of instances) {
+    // Instance IDs: "ssh-{hostId}-{profile}" or other formats
+    const match = inst.id.match(/^ssh-(\d+)-/);
+    const hostKey = match ? `ssh-${match[1]}` : "local";
+    if (!groups.has(hostKey)) groups.set(hostKey, []);
+    groups.get(hostKey)!.push(inst);
+  }
+  return [...groups.entries()].map(([hostKey, insts]) => {
+    // Connection labels are "hostLabel/profile" — extract host part
+    const connLabel = insts[0]?.connection.label || "";
+    const slashIdx = connLabel.indexOf("/");
+    const hostLabel = hostKey === "local" ? "Local" : (slashIdx > 0 ? connLabel.slice(0, slashIdx) : hostKey);
+    return { hostKey, hostLabel, instances: insts };
+  });
+}
+
+interface InstallStep {
+  step: string;
+  status: "running" | "done" | "error" | "skipped";
+  detail?: string;
+}
+
+async function streamInstallSSE(
+  hostId: number | string,
+  version: string | undefined,
+  onStep: (step: InstallStep) => void,
+  onDone: (success: boolean) => void,
+) {
+  const body = JSON.stringify({ version });
+  const res = await fetch(`/api/lifecycle/host/${hostId}/install`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body,
+  });
+  const reader = res.body?.getReader();
+  if (!reader) { onDone(false); return; }
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      try {
+        const msg = JSON.parse(line.slice(6));
+        if (msg.done !== undefined) { onDone(msg.success); return; }
+        onStep(msg as InstallStep);
+      } catch { /* ignore */ }
+    }
+  }
+  onDone(false);
+}
+
+const STEP_ICON: Record<string, string> = {
+  running: "⏳",
+  done: "✅",
+  error: "❌",
+  skipped: "⏭️",
+};
+
+function EmptyHostCard({ host, onInstalled }: { host: RemoteHost; onInstalled: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [steps, setSteps] = useState<InstallStep[]>([]);
+  const [result, setResult] = useState<"success" | "error" | null>(null);
+  const [versionOptions, setVersionOptions] = useState<Array<{ label: string; value: string }>>([]);
+  const [selectedVersion, setSelectedVersion] = useState("");
+
+  useEffect(() => {
+    get<{ distTags: Record<string, string>; versions: string[] }>("/lifecycle/available-versions")
+      .then(({ distTags, versions }) => {
+        const opts: Array<{ label: string; value: string }> = [];
+        // Add dist-tags first, latest on top
+        if (distTags) {
+          const sorted = Object.entries(distTags).sort(([a], [b]) => a === "latest" ? -1 : b === "latest" ? 1 : a.localeCompare(b));
+          for (const [tag, ver] of sorted) {
+            opts.push({ label: tag === "latest" ? `${ver} (stable)` : `${ver} (${tag})`, value: ver });
+          }
+        }
+        // Add recent stable versions not already in dist-tags
+        const tagVersions = new Set(Object.values(distTags || {}));
+        for (const ver of (versions || [])) {
+          if (!tagVersions.has(ver)) {
+            opts.push({ label: ver, value: ver });
+          }
+        }
+        setVersionOptions(opts);
+        if (distTags?.latest) setSelectedVersion(distTags.latest);
+        else if (opts.length) setSelectedVersion(opts[0].value);
+      })
+      .catch(() => {});
+  }, []);
+
+  const install = async () => {
+    setBusy(true); setSteps([]); setResult(null);
+    await streamInstallSSE(
+      host.id,
+      selectedVersion || undefined,
+      (step) => setSteps((prev) => {
+        const idx = prev.findIndex((s) => s.step === step.step);
+        if (idx >= 0) { const next = [...prev]; next[idx] = step; return next; }
+        return [...prev, step];
+      }),
+      async (success) => {
+        setResult(success ? "success" : "error");
+        setBusy(false);
+        if (success) {
+          setSteps((prev) => [...prev, { step: "Scanning instances...", status: "running" }]);
+          try {
+            await post(`/hosts/${host.id}/scan`, {});
+            setSteps((prev) => {
+              const next = [...prev];
+              const idx = next.findIndex((s) => s.step === "Scanning instances...");
+              if (idx >= 0) next[idx] = { step: "Scanning instances...", status: "done" };
+              return next;
+            });
+          } catch { /* ignore */ }
+          onInstalled();
+        }
+      },
+    );
+  };
+
+  return (
+    <div className="bg-s1 border border-edge rounded-card p-4 shadow-card border-dashed">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="relative inline-flex h-2 w-2">
+          <span className="relative inline-block w-2 h-2 rounded-full bg-warn" />
+        </span>
+        <span className="font-medium text-ink truncate">{host.label}</span>
+      </div>
+      <p className="text-xs text-ink-3 mb-1">{host.username}@{host.host}:{host.port}</p>
+      {!busy && !result && <p className="text-xs text-warn mb-3">OpenClaw not installed</p>}
+      {steps.length > 0 && (
+        <div className="mb-3 space-y-1">
+          {steps.map((s, i) => (
+            <div key={i} className="flex items-start gap-1.5 text-xs">
+              <span className="shrink-0">{STEP_ICON[s.status]}</span>
+              <span className={s.status === "error" ? "text-danger" : s.status === "done" ? "text-ok" : "text-ink-2"}>
+                {s.step}{s.detail ? ` — ${s.detail}` : ""}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      {result === "error" && (
+        <p className="text-xs text-danger mb-2">Installation failed. Check server logs or try again.</p>
+      )}
+      {!busy && result !== "success" && (
+        <div className="space-y-2">
+          {versionOptions.length > 0 && (
+            <select
+              value={selectedVersion}
+              onChange={(e) => setSelectedVersion(e.target.value)}
+              className="w-full bg-s2 border border-edge rounded px-2 py-1.5 text-xs text-ink"
+            >
+              {versionOptions.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          )}
+          <button
+            onClick={install}
+            disabled={busy}
+            className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 bg-brand/10 hover:bg-brand/20 text-brand rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
+          >
+            <Download size={14} />
+            Install OpenClaw
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InstancesByHost({ instances, emptyHosts, refresh }: { instances: InstanceInfo[]; emptyHosts: RemoteHost[]; refresh: () => void }) {
+  const groups = groupByHost(instances);
+  const [selectedHost, setSelectedHost] = useState<string | null>(null);
+  const filtered = selectedHost ? groups.filter((g) => g.hostKey === selectedHost) : groups;
+  const showEmptyHosts = !selectedHost || selectedHost === "empty-hosts";
+
+  return (
+    <div>
+      {(groups.length > 1 || emptyHosts.length > 0) && (
+        <div className="flex gap-2 mb-4 flex-wrap">
+          <button
+            onClick={() => setSelectedHost(null)}
+            className={`px-3 py-1 rounded text-xs font-medium ${!selectedHost ? "bg-s3 text-ink" : "bg-s2 text-ink-3 hover:text-ink"}`}
+          >
+            All ({instances.length + emptyHosts.length})
+          </button>
+          {groups.map((g) => (
+            <button
+              key={g.hostKey}
+              onClick={() => setSelectedHost(g.hostKey)}
+              className={`px-3 py-1 rounded text-xs font-medium ${selectedHost === g.hostKey ? "bg-s3 text-ink" : "bg-s2 text-ink-3 hover:text-ink"}`}
+            >
+              {g.hostLabel} ({g.instances.length})
+            </button>
+          ))}
+          {emptyHosts.length > 0 && (
+            <button
+              onClick={() => setSelectedHost("empty-hosts")}
+              className={`px-3 py-1 rounded text-xs font-medium ${selectedHost === "empty-hosts" ? "bg-s3 text-ink" : "bg-warn/20 text-warn hover:bg-warn/30"}`}
+            >
+              Not Installed ({emptyHosts.length})
+            </button>
+          )}
+        </div>
+      )}
+      <div className="space-y-6">
+        {filtered.map((g) => (
+          <div key={g.hostKey}>
+            <h2 className="text-sm text-ink-3 uppercase tracking-wide mb-3">{g.hostLabel} — {g.instances.length} instance{g.instances.length !== 1 ? "s" : ""}</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {g.instances.map((inst) => (
+                <InstanceCard key={inst.id} inst={inst} onRefresh={() => post(`/instances/${inst.id}/refresh`).then(refresh)} />
+              ))}
+            </div>
+          </div>
+        ))}
+        {showEmptyHosts && emptyHosts.length > 0 && (
+          <div>
+            <h2 className="text-sm text-warn uppercase tracking-wide mb-3">Awaiting Installation — {emptyHosts.length} host{emptyHosts.length !== 1 ? "s" : ""}</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {emptyHosts.map((h) => (
+                <EmptyHostCard key={h.id} host={h} onInstalled={refresh} />
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function Dashboard() {
+  const { instances, loading, refresh, addInstance } = useInstances();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+  const [showAdd, setShowAdd] = useState(false);
+  const [showTopo, setShowTopo] = useState(false);
+  const [hosts, setHosts] = useState<RemoteHost[]>([]);
+
+  useEffect(() => {
+    if (isAdmin) {
+      get<RemoteHost[]>("/hosts").then(setHosts).catch(() => {});
+    }
+  }, [isAdmin, instances]);
+
+  // Hosts that have no discovered instances
+  const hostIdsWithInstances = new Set<number>();
+  for (const inst of instances) {
+    const m = inst.id.match(/^ssh-(\d+)-/);
+    if (m) hostIdsWithInstances.add(parseInt(m[1]));
+  }
+  const emptyHosts = hosts.filter((h) => !hostIdsWithInstances.has(h.id));
+
+  const totalSessions = instances.reduce((s, i) => s + i.sessions.length, 0);
+  const totalAgents = instances.reduce((s, i) => s + i.agents.length, 0);
+  const criticalIssues = instances.reduce((s, i) => s + (i.securityAudit?.filter((a) => a.level === "critical").length || 0), 0);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-bold text-ink">Dashboard</h1>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowTopo(!showTopo)}
+            className={`px-4 py-2 rounded-card text-sm font-semibold transition-colors ${
+              showTopo ? "bg-brand text-white" : "bg-s2 text-ink-2 hover:text-ink border border-edge"
+            }`}
+          >
+            Topology
+          </button>
+          <button
+            onClick={() => setShowAdd(true)}
+            className="px-4 py-2 bg-brand hover:bg-brand-light rounded-card text-sm text-white font-semibold shadow-glow-brand transition-colors"
+          >
+            <Plus size={16} className="inline" /> Add Instance
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-4 gap-4 mb-6">
+        {[
+          { label: "Instances", value: instances.length },
+          { label: "Active Sessions", value: totalSessions },
+          { label: "Agents", value: totalAgents },
+          { label: "Critical Issues", value: criticalIssues, color: criticalIssues > 0 ? "text-danger" : undefined },
+        ].map((stat) => (
+          <div key={stat.label} className="bg-s1 border border-edge rounded-card p-4 shadow-card">
+            <p className="text-sm text-ink-2">{stat.label}</p>
+            <p className={`text-2xl font-bold text-ink ${stat.color || ""}`}>{stat.value}</p>
+          </div>
+        ))}
+      </div>
+
+      {showTopo && <div className="mb-6"><TopologyView instances={instances} /></div>}
+
+      {loading ? (
+        <p className="text-ink-3">Loading instances...</p>
+      ) : instances.length === 0 && emptyHosts.length === 0 ? (
+        <div className="text-center py-12 text-ink-3">
+          <p className="text-lg mb-2">No instances found</p>
+          <p className="text-sm">Add a remote instance or ensure OpenClaw is running locally</p>
+        </div>
+      ) : (
+        <InstancesByHost instances={instances} emptyHosts={emptyHosts} refresh={refresh} />
+      )}
+
+      {showAdd && <AddInstanceDialog onClose={() => { setShowAdd(false); refresh(); }} onAdd={addInstance} isAdmin={isAdmin ?? false} />}
+    </div>
+  );
+}

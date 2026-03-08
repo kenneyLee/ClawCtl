@@ -1,0 +1,11 @@
+services:
+  clawctl:
+    build: .
+    ports:
+      - "7100:7100"
+    volumes:
+      - ~/.openclaw:/root/.openclaw:ro
+      - ~/.openclaw-feishu:/root/.openclaw-feishu:ro
+      - ~/.openclaw-tg:/root/.openclaw-tg:ro
+    environment:
+      - CLAWCTL_PORT=7100
