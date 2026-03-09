@@ -202,31 +202,32 @@ export class GatewayClient extends EventEmitter {
   async fetchAgents(): Promise<AgentInfo[]> {
     const r = await this.rpc("agents.list", {});
     const defaultId = r?.defaultId;
-    // Merge with helloOk snapshot for richer data (model, workspace, etc.)
-    const snapshotAgents: any[] = this.helloOk?.snapshot?.health?.agents || [];
-    const snapshotMap = new Map(snapshotAgents.map((a: any) => [a.agentId, a]));
-    return (r?.agents || []).map((a: any) => {
-      const snap = snapshotMap.get(a.id);
-      return {
-        id: a.id,
-        name: a.name || snap?.name,
-        workspace: a.workspace,
-        model: a.model?.primary,
-        toolsAllow: a.tools?.allow,
-        isDefault: a.isDefault ?? (a.id === defaultId),
-      };
-    });
+    // agents.list only returns { id, name, identity } — workspace/model/tools
+    // come from config in fetchFullInstance()
+    return (r?.agents || []).map((a: any) => ({
+      id: a.id,
+      name: a.name,
+      isDefault: a.id === defaultId,
+    }));
   }
 
   async fetchChannels(): Promise<ChannelInfo[]> {
     const r = await this.rpc("channels.status", {});
-    return (r?.channels || []).map((ch: any) => ({
-      type: ch.type || ch.id,
-      accountId: ch.accountId,
-      enabled: ch.enabled,
-      running: ch.running,
-      configured: ch.configured,
-    }));
+    const channelOrder: string[] = r?.channelOrder || [];
+    const channelAccounts: Record<string, any[]> = r?.channelAccounts || {};
+    const result: ChannelInfo[] = [];
+    for (const type of channelOrder) {
+      for (const a of channelAccounts[type] || []) {
+        result.push({
+          type,
+          accountId: a.accountId || "default",
+          enabled: a.enabled ?? true,
+          running: a.running ?? false,
+          configured: a.configured ?? false,
+        });
+      }
+    }
+    return result;
   }
 
   async fetchChannelDetails(probe = false): Promise<ChannelStatusResponse> {
@@ -283,8 +284,6 @@ export class GatewayClient extends EventEmitter {
       inputTokens: s.inputTokens,
       outputTokens: s.outputTokens,
       totalTokens: s.totalTokens,
-      cacheReadTokens: s.cacheReadTokens,
-      cacheWriteTokens: s.cacheWriteTokens,
     }));
   }
 
@@ -327,13 +326,16 @@ export class GatewayClient extends EventEmitter {
 
   async fetchToolsForAgent(agentId: string): Promise<ToolInfo[]> {
     const r = await this.rpc("tools.catalog", { agentId });
-    return (r?.tools || []).map((t: any) => ({
-      name: t.name,
-      category: t.category,
-      description: t.description,
-      enabled: t.enabled,
-      source: t.source,
-    }));
+    const groups: any[] = r?.groups || [];
+    return groups.flatMap((g: any) =>
+      (g.tools || []).map((t: any) => ({
+        name: t.id || t.name,
+        category: g.label || g.id,
+        description: t.description,
+        enabled: true,
+        source: t.source || g.source,
+      }))
+    );
   }
 
   async fetchBindings(): Promise<Binding[]> {

@@ -77,8 +77,9 @@ describe("GatewayClient", () => {
     const agents = await client.fetchAgents();
     expect(agents).toHaveLength(2);
     expect(agents[0].id).toBe("main");
-    expect(agents[0].model).toBe("gpt-4o");
-    expect(agents[0].toolsAllow).toEqual(["exec", "search"]);
+    expect(agents[0].name).toBe("main");
+    expect(agents[0].isDefault).toBe(true);
+    expect(agents[1].isDefault).toBe(false);
     client.disconnect();
   });
 
@@ -88,7 +89,9 @@ describe("GatewayClient", () => {
     const channels = await client.fetchChannels();
     expect(channels).toHaveLength(1);
     expect(channels[0].type).toBe("feishu");
+    expect(channels[0].accountId).toBe("abc");
     expect(channels[0].running).toBe(true);
+    expect(channels[0].configured).toBe(true);
     client.disconnect();
   });
 

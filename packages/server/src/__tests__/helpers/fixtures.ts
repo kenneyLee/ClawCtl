@@ -41,14 +41,19 @@ export const MOCK_RPC_RESPONSES: Record<string, any> = {
   "agents.list": {
     defaultId: "main",
     agents: [
-      { id: "main", name: "main", model: { primary: "gpt-4o" }, tools: { allow: ["exec", "search"] } },
-      { id: "bhpc", name: "bhpc", model: { primary: "gpt-4o" }, tools: { allow: ["search"] } },
+      { id: "main", name: "main" },
+      { id: "bhpc", name: "bhpc" },
     ],
   },
   "channels.status": {
-    channels: [
-      { type: "feishu", accountId: "abc", enabled: true, running: true, configured: true },
-    ],
+    channelOrder: ["feishu"],
+    channelLabels: { feishu: "Feishu" },
+    channelAccounts: {
+      feishu: [
+        { accountId: "abc", enabled: true, running: true, configured: true },
+      ],
+    },
+    channelDefaultAccountId: { feishu: "abc" },
   },
   "sessions.list": {
     sessions: [
@@ -62,8 +67,17 @@ export const MOCK_RPC_RESPONSES: Record<string, any> = {
   },
   "config.get": { gateway: { port: 18789, auth: { token: "mock-token" } }, agents: {} },
   "tools.catalog": {
-    tools: [
-      { name: "exec", category: "Runtime", description: "Execute commands", enabled: true, source: "core" },
+    agentId: "main",
+    profiles: [],
+    groups: [
+      {
+        id: "runtime",
+        label: "Runtime",
+        source: "core",
+        tools: [
+          { id: "exec", label: "Execute", description: "Execute commands", source: "core" },
+        ],
+      },
     ],
   },
   "chat.history": {
