@@ -53,6 +53,8 @@ Every code change that affects testable behavior **must** include corresponding 
 
 ## OpenClaw Credential & Config Writing
 
+**Any code that reads/writes OpenClaw config files, auth profiles, or communicates via Gateway RPC MUST be verified against the OpenClaw source code (`/Users/kris/proj/openclaw/openclaw/src/`). Do NOT assume field names, file formats, or storage locations — always check the actual implementation first.**
+
 When writing files to remote OpenClaw instances, follow these rules strictly:
 
 1. **API keys / OAuth tokens** go in `~/.openclaw/agents/<agentId>/agent/auth-profiles.json`, NOT in `openclaw.json`
