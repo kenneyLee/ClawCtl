@@ -1622,6 +1622,17 @@ function ChannelsTab({ inst }: { inst: InstanceInfo }) {
     }
   }
 
+  async function handleDeleteChannel(channel: string) {
+    if (!confirm(t("channels.confirmDelete", { channel }))) return;
+    try {
+      await del(`/lifecycle/${inst.id}/channels/${channel}`);
+      // Gateway restarts after delete; wait briefly before refreshing
+      setTimeout(() => loadChannels(), 3000);
+    } catch (err: any) {
+      alert(`${t("common.delete")} failed: ${err.message}`);
+    }
+  }
+
   function startEdit(channel: string, accountId: string, account: any, configChannels: any) {
     const chConfig = configChannels?.[channel] || {};
     const accConfig = chConfig.accounts?.[accountId] || chConfig;
@@ -1994,6 +2005,12 @@ function ChannelsTab({ inst }: { inst: InstanceInfo }) {
                 {connectedCount > 0 && <span className="text-ok">{connectedCount} {t("channels.connected")}</span>}
                 {runningCount > connectedCount && <span className="text-ok">{runningCount - connectedCount} {t("channels.running")}</span>}
                 {ch.accounts.length > runningCount && <span className="text-ink-2">{ch.accounts.length - runningCount} {t("channels.stopped")}</span>}
+                <button
+                  onClick={() => handleDeleteChannel(ch.type)}
+                  className="px-2 py-1 rounded bg-danger/10 border border-danger/30 text-danger hover:bg-danger/20 flex items-center gap-1"
+                >
+                  <Trash2 size={12} /> {t("common.delete")}
+                </button>
               </div>
             </div>
 

@@ -186,7 +186,8 @@
     "groupLabel": "群组策略：",
     "allowLabel": "允许列表：",
     "groupAllowLabel": "群组允许列表：",
-    "clickToManage": "点击管理频道 →"
+    "clickToManage": "点击管理频道 →",
+    "confirmDelete": "删除渠道 {{channel}} 并移除所有绑定？此操作不可撤销。"
   },
   "config": {
     "title": "配置管理",

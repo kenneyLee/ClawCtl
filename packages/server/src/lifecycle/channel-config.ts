@@ -113,6 +113,21 @@ export function createChannelConfig(
   return result;
 }
 
+export function deleteChannelConfig(config: any, channel: string): any {
+  if (!config.channels?.[channel]) {
+    throw new Error(`Channel not found: ${channel}`);
+  }
+  const result = JSON.parse(JSON.stringify(config));
+  delete result.channels[channel];
+  // Remove bindings referencing this channel
+  if (Array.isArray(result.bindings)) {
+    result.bindings = result.bindings.filter(
+      (b: any) => b.match?.channel !== channel,
+    );
+  }
+  return result;
+}
+
 const ALLOWED_FIELDS = new Set([
   "enabled",
   "dmPolicy",

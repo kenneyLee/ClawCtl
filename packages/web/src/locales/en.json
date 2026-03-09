@@ -186,7 +186,8 @@
     "groupLabel": "Group:",
     "allowLabel": "Allow:",
     "groupAllowLabel": "Group Allow:",
-    "clickToManage": "Click to manage channels →"
+    "clickToManage": "Click to manage channels →",
+    "confirmDelete": "Delete channel {{channel}} and remove all its bindings? This cannot be undone."
   },
   "config": {
     "title": "Config Management",

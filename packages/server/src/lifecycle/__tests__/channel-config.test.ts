@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   mergeChannelAccountConfig,
   createChannelConfig,
+  deleteChannelConfig,
   CHANNEL_DEFS,
 } from "../channel-config.js";
 
@@ -222,5 +223,40 @@ describe("CHANNEL_DEFS", () => {
 
   it("telegram requires botToken", () => {
     expect(CHANNEL_DEFS.telegram.requiredFields).toContain("botToken");
+  });
+});
+
+describe("deleteChannelConfig", () => {
+  it("removes channel and its bindings", () => {
+    const config = {
+      channels: {
+        telegram: { enabled: true, accounts: { default: { botToken: "tok" } } },
+        feishu: { enabled: true, accounts: { default: { appId: "a" } } },
+      },
+      bindings: [
+        { agentId: "a1", match: { channel: "telegram", accountId: "default" } },
+        { agentId: "a1", match: { channel: "feishu", accountId: "default" } },
+      ],
+    };
+    const result = deleteChannelConfig(config, "telegram");
+    expect(result.channels.telegram).toBeUndefined();
+    expect(result.channels.feishu).toBeDefined();
+    expect(result.bindings).toHaveLength(1);
+    expect(result.bindings[0].match.channel).toBe("feishu");
+  });
+
+  it("throws for unknown channel", () => {
+    const config = { channels: {} };
+    expect(() => deleteChannelConfig(config, "telegram")).toThrow("not found");
+  });
+
+  it("does not mutate original config", () => {
+    const config = {
+      channels: { telegram: { enabled: true } },
+      bindings: [{ agentId: "a1", match: { channel: "telegram" } }],
+    };
+    deleteChannelConfig(config, "telegram");
+    expect(config.channels.telegram).toBeDefined();
+    expect(config.bindings).toHaveLength(1);
   });
 });

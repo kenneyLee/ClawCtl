@@ -11,7 +11,7 @@ import { checkNodeVersion, getVersions, streamInstall, streamUninstall, streamCh
 import { readRemoteConfig, writeRemoteConfig, readAuthProfiles, writeAuthProfiles, getConfigDir, profileFromInstanceId } from "../lifecycle/config.js";
 import { SnapshotStore } from "../lifecycle/snapshot.js";
 import { extractModels, mergeAgentConfig, removeAgent } from "../lifecycle/agent-config.js";
-import { mergeChannelAccountConfig } from "../lifecycle/channel-config.js";
+import { mergeChannelAccountConfig, deleteChannelConfig } from "../lifecycle/channel-config.js";
 import { getOAuthStatus, clearOAuthFlow } from "../llm/openai-oauth.js";
 
 const VERSION_CACHE_TTL = 60_000; // 60s
@@ -258,6 +258,33 @@ export function lifecycleRoutes(hostStore: HostStore, manager: InstanceManager, 
     } catch (err: any) {
       if (err.message.includes("not found")) return c.json({ error: err.message }, 404);
       auditLog(db, c, "lifecycle.channel-config", `FAILED: ${err.message}`, id);
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
+  app.delete("/:id/channels/:channel", async (c) => {
+    const id = c.req.param("id");
+    const channel = c.req.param("channel");
+    if (!manager.get(id)) return c.json({ error: "instance not found" }, 404);
+    const profile = profileFromInstanceId(id);
+    const configDir = getConfigDir(profile);
+    const exec = getExecutor(id, hostStore);
+    try {
+      const config = await readRemoteConfig(exec, configDir);
+      const updated = deleteChannelConfig(config, channel);
+      await writeRemoteConfig(exec, configDir, updated);
+      try { snapshots.create(id, JSON.stringify(updated), `delete channel ${channel}`); } catch { /* best-effort */ }
+      // Restart gateway so runtime state reflects the removed channel
+      const portR = await exec.exec(
+        `grep -o '"port"[[:space:]]*:[[:space:]]*[0-9]*' "${configDir}/openclaw.json" | head -1 | grep -o '[0-9]*$'; true`,
+      );
+      const port = portR.stdout.trim() || "3010";
+      await exec.exec(`pkill -USR1 -f "openclaw.*gateway.*--port[= ]${port}" 2>/dev/null; true`);
+      auditLog(db, c, "lifecycle.channel-delete", `Deleted ${channel}`, id);
+      return c.json({ ok: true });
+    } catch (err: any) {
+      if (err.message.includes("not found")) return c.json({ error: err.message }, 404);
+      auditLog(db, c, "lifecycle.channel-delete", `FAILED: ${err.message}`, id);
       return c.json({ error: err.message }, 500);
     }
   });
