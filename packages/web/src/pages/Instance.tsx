@@ -1418,7 +1418,7 @@ function ControlTab({ inst }: { inst: InstanceInfo }) {
               {versions?.node?.version || (versions ? t("instance.control.notFound") : "...")}
             </p>
           </div>
-          {versions?.openclaw?.latest && versions.openclaw.installed !== versions.openclaw.latest && (
+          {versions?.openclaw?.updateAvailable && (
             <p className="ml-auto text-xs text-ink-3">{t("instance.control.upgradeInSettings")}</p>
           )}
         </div>

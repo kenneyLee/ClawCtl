@@ -39,10 +39,12 @@ export async function getVersions(exec: CommandExecutor): Promise<VersionInfo> {
       latest = distTags?.latest;
     } catch { /* ignore parse error */ }
   }
+  // Extract semver from installed string (e.g. "OpenClaw 2026.3.8 (3caab92)" → "2026.3.8")
+  const installedVersion = installed?.match(/(\d+\.\d+\.\d+)/)?.[1];
   return {
     installed,
     latest,
-    updateAvailable: !!(installed && latest && installed !== latest),
+    updateAvailable: !!(installedVersion && latest && installedVersion !== latest),
     distTags,
   };
 }
