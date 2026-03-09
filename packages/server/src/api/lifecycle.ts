@@ -346,15 +346,41 @@ export function lifecycleRoutes(hostStore: HostStore, manager: InstanceManager, 
     try {
       const config = await readRemoteConfig(exec, configDir);
       if (!config.models) config.models = {};
-      // Sanitize: strip ClawCtl-internal fields, ensure required 'models' array
-      for (const [, p] of Object.entries(providers)) {
+      // Extract API keys and write to auth-profiles.json (where OpenClaw reads them)
+      const agentList: any[] = config?.agents?.list || [];
+      const agentIds = agentList.map((a: any) => a.id);
+      if (agentIds.length === 0) agentIds.push("main");
+
+      for (const [providerName, p] of Object.entries(providers) as [string, any][]) {
         if (p && typeof p === "object") {
           delete p._oauthRefreshToken;
           delete p._oauthExpiresAt;
           if (!p.models) p.models = [];
+          // Write API key to auth-profiles.json for all agents
+          if (p.apiKey && p.auth !== "oauth") {
+            for (const agentId of agentIds) {
+              const profiles = await readAuthProfiles(exec, configDir, agentId);
+              if (!profiles.version) profiles.version = 1;
+              if (!profiles.profiles) profiles.profiles = {};
+              profiles.profiles[`${providerName}:default`] = {
+                type: "api_key",
+                provider: providerName,
+                key: p.apiKey,
+              };
+              await writeAuthProfiles(exec, configDir, agentId, profiles);
+            }
+          }
         }
       }
-      config.models.providers = providers;
+      // Write provider definitions (baseUrl, models) to openclaw.json — but strip apiKey
+      const cleanProviders: Record<string, any> = {};
+      for (const [name, p] of Object.entries(providers) as [string, any][]) {
+        if (p && typeof p === "object") {
+          const { apiKey: _, ...rest } = p;
+          cleanProviders[name] = rest;
+        }
+      }
+      config.models.providers = cleanProviders;
       await writeRemoteConfig(exec, configDir, config);
       auditLog(db, c, "lifecycle.providers", "LLM providers updated", id);
       return c.json({ ok: true });
