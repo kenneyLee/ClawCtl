@@ -142,9 +142,12 @@ export async function refreshOpenAIToken(refreshToken: string): Promise<OpenAIOA
 
 /** Start the OpenAI OAuth flow. Returns the auth URL for the user to visit. */
 export async function startOpenAIOAuth(): Promise<{ authUrl: string }> {
-  // Clean up any previous flow
+  // Clean up any previous flow — must fully close server to release port
   if (pendingFlow) {
-    try { pendingFlow.server.close(); } catch { /* ignore */ }
+    try {
+      pendingFlow.server.closeAllConnections();
+      await new Promise<void>((resolve) => pendingFlow!.server.close(() => resolve()));
+    } catch { /* ignore */ }
     pendingFlow = null;
   }
 
@@ -235,7 +238,10 @@ export function submitManualCode(input: string): boolean {
 /** Clear the pending flow state */
 export function clearOAuthFlow(): void {
   if (pendingFlow) {
-    try { pendingFlow.server.close(); } catch { /* ignore */ }
+    try {
+      pendingFlow.server.closeAllConnections();
+      pendingFlow.server.close();
+    } catch { /* ignore */ }
     pendingFlow = null;
   }
 }

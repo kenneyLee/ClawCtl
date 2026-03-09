@@ -4,6 +4,16 @@ import { get, put, post, del } from "../lib/api";
 import { useAuth, type Role } from "../hooks/useAuth";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 
+/** Animated dots indicator for long-running operations */
+function AnimatedDots() {
+  const [dots, setDots] = useState("");
+  useEffect(() => {
+    const id = setInterval(() => setDots((d) => d.length >= 3 ? "" : d + "."), 500);
+    return () => clearInterval(id);
+  }, []);
+  return <span className="inline-block w-5 text-left">{dots}</span>;
+}
+
 interface UserInfo {
   id: number;
   username: string;
@@ -35,12 +45,33 @@ function defaultModelFor(p: string): string {
     case "anthropic": return "claude-opus-4-6";
     case "azure": return "gpt-5.3-codex";
     case "ollama": return "llama3";
+    case "moonshot": return "kimi-latest";
+    case "deepseek": return "deepseek-chat";
+    case "zhipu": return "glm-5";
+    case "qwen": return "qwen-max-latest";
+    case "baichuan": return "Baichuan4";
+    case "minimax": return "abab6.5s-chat";
+    case "yi": return "yi-large";
+    case "stepfun": return "step-2-16k";
+    case "google": return "gemini-2.5-pro";
     default: return "";
   }
 }
 
+const DEFAULT_BASE_URLS: Record<string, string> = {
+  moonshot: "https://api.moonshot.cn/v1",
+  deepseek: "https://api.deepseek.com/v1",
+  zhipu: "https://open.bigmodel.cn/api/paas/v4",
+  qwen: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  baichuan: "https://api.baichuan-ai.com/v1",
+  minimax: "https://api.minimax.chat/v1",
+  yi: "https://api.lingyiwanwu.com/v1",
+  stepfun: "https://api.stepfun.com/v1",
+};
+
 const MODELS_BY_PROVIDER: Record<string, string[]> = {
   openai: [
+    "gpt-5.4",
     "gpt-5.3-codex", "gpt-5.3-codex-spark",
     "gpt-5.2", "gpt-5.2-codex", "gpt-5.2-pro",
     "gpt-5.1", "gpt-5.1-codex", "gpt-5.1-codex-max", "gpt-5.1-codex-mini",
@@ -60,8 +91,48 @@ const MODELS_BY_PROVIDER: Record<string, string[]> = {
   azure: [
     "gpt-5.3-codex", "gpt-5.1-codex", "gpt-4o", "gpt-4o-mini", "gpt-4",
   ],
+  google: [
+    "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash",
+  ],
   ollama: [
-    "llama3", "llama3.1", "codellama", "mistral", "mixtral", "deepseek-coder",
+    "llama3", "llama3.3", "llama3.2", "llama3.1",
+    "qwen2.5", "qwen2.5-coder", "deepseek-r1", "deepseek-coder-v2",
+    "codellama", "mistral", "mixtral", "gemma2", "phi-4",
+  ],
+  moonshot: [
+    "kimi-latest", "kimi-thinking-preview",
+    "moonshot-v1-auto", "moonshot-v1-128k", "moonshot-v1-32k", "moonshot-v1-8k",
+  ],
+  deepseek: [
+    "deepseek-chat", "deepseek-reasoner",
+  ],
+  zhipu: [
+    "glm-5", "glm-4.7", "glm-4.6",
+    "glm-4-plus", "glm-4-long", "glm-4-air", "glm-4-airx", "glm-4-flash", "glm-4-flashx",
+    "glm-4", "glm-z1-air", "glm-z1-flash",
+  ],
+  qwen: [
+    "qwen-max", "qwen-max-latest", "qwen-plus", "qwen-plus-latest",
+    "qwen-turbo", "qwen-turbo-latest", "qwen-long",
+    "qwen3-235b-a22b", "qwen3-32b", "qwen3-14b", "qwen3-8b",
+    "qwen2.5-72b-instruct", "qwen2.5-coder-32b-instruct",
+    "qwq-plus", "qwq-32b",
+  ],
+  baichuan: [
+    "Baichuan4-Air", "Baichuan4-Turbo", "Baichuan4",
+    "Baichuan3-Turbo", "Baichuan3-Turbo-128k",
+  ],
+  minimax: [
+    "MiniMax-Text-01", "abab6.5s-chat", "abab6.5t-chat", "abab5.5-chat",
+  ],
+  yi: [
+    "yi-lightning", "yi-large", "yi-large-turbo",
+    "yi-medium", "yi-medium-200k", "yi-spark", "yi-vision",
+  ],
+  stepfun: [
+    "step-2-16k", "step-2-mini",
+    "step-1-256k", "step-1-128k", "step-1-32k",
+    "step-1v-32k",
   ],
 };
 
@@ -126,6 +197,11 @@ export function Settings() {
   const [installing, setInstalling] = useState<number | null>(null);
   const [installMsg, setInstallMsg] = useState<string | null>(null);
   const [installStep, setInstallStep] = useState<string | null>(null);
+  const [installError, setInstallError] = useState<boolean>(false);
+  const [hostVersions, setHostVersions] = useState<Record<number, { installed?: string; latest?: string; distTags?: Record<string, string> }>>({});
+  const [upgradeHostId, setUpgradeHostId] = useState<number | null>(null);
+  const [upgradeVersion, setUpgradeVersion] = useState("");
+  const [confirmUninstallHost, setConfirmUninstallHost] = useState<RemoteHost | null>(null);
   // Confirm dialogs
   const [confirmDeleteHost, setConfirmDeleteHost] = useState<RemoteHost | null>(null);
   const [confirmDeleteUser, setConfirmDeleteUser] = useState<UserInfo | null>(null);
@@ -237,6 +313,108 @@ export function Settings() {
     }
   };
 
+  const runHostInstall = async (h: RemoteHost, version?: string) => {
+    if (installing !== null) return;
+    setInstalling(h.id); setInstallMsg(null); setScanMsg(null); setInstallStep(null); setInstallError(false);
+    let streamOk = false;
+    try {
+      const res = await fetch(`/api/lifecycle/host/${h.id}/install`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(version ? { version } : {}),
+      });
+      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() || "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const ev = JSON.parse(line.slice(6));
+            if (ev.done) {
+              streamOk = true;
+              if (ev.success) {
+                setInstallMsg(`${h.label}: OpenClaw ${version ? `v${version} ` : ""}${t("settings.installSuccess")}`);
+              } else {
+                setInstallMsg(`${h.label}: ${t("settings.installFailed")}${ev.detail ? ` — ${ev.detail}` : ""}`);
+                setInstallError(true);
+              }
+              setInstallStep(null);
+            } else {
+              setInstallStep(ev.detail || ev.step || ev.status || t("settings.installing"));
+            }
+          } catch { /* skip malformed */ }
+        }
+      }
+    } catch { /* stream disconnected */ }
+    if (!streamOk) {
+      setInstallStep(t("settings.installPolling"));
+      for (let i = 0; i < 40; i++) {
+        await new Promise((r) => setTimeout(r, 3000));
+        try {
+          const st = await get<{ status: string; version?: string; detail?: string }>(`/lifecycle/host/${h.id}/install-status`);
+          if (st.status === "installed") {
+            setInstallMsg(`${h.label}: OpenClaw v${st.version} ${t("settings.installSuccess")}`);
+            break;
+          } else if (st.status === "installing") {
+            setInstallStep(st.detail || t("settings.installing"));
+          } else {
+            setInstallMsg(`${h.label}: ${t("settings.installFailed")}${st.detail ? ` — ${st.detail}` : ""}`);
+            setInstallError(true);
+            break;
+          }
+        } catch { break; }
+      }
+    }
+    setInstallStep(null);
+    setInstalling(null);
+  };
+
+  const runHostUninstall = async (h: RemoteHost) => {
+    if (installing !== null) return;
+    setInstalling(h.id); setInstallMsg(null); setInstallStep(null);
+    try {
+      const res = await fetch(`/api/lifecycle/host/${h.id}/uninstall`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() || "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const ev = JSON.parse(line.slice(6));
+            if (ev.done) {
+              setInstallMsg(ev.success
+                ? `${h.label}: OpenClaw uninstalled.`
+                : `${h.label}: Uninstall failed`);
+              setInstallStep(null);
+            } else {
+              setInstallStep(`${ev.step}: ${ev.status}${ev.detail ? ` — ${ev.detail}` : ""}`);
+            }
+          } catch { /* skip */ }
+        }
+      }
+    } catch { setInstallMsg(`${h.label}: Uninstall failed (stream error)`); }
+    setInstallStep(null);
+    setInstalling(null);
+  };
+
   const deleteUser = async (id: number) => {
     await del(`/auth/users/${id}`);
     setUsers(users.filter((u) => u.id !== id));
@@ -284,7 +462,7 @@ export function Settings() {
   };
 
   return (
-    <div className="max-w-2xl">
+    <div className="max-w-5xl">
       <h1 className="text-2xl font-bold mb-6">{t("settings.title")}</h1>
 
       {/* Language */}
@@ -307,16 +485,38 @@ export function Settings() {
         <div className="space-y-3">
           <div>
             <label className="block text-sm text-ink-2 mb-1">{t("settings.providerLabel")}</label>
-            <select value={provider} onChange={(e) => { setProvider(e.target.value); setModel(defaultModelFor(e.target.value)); }} disabled={!isAdmin} className="w-full bg-s2 border border-edge rounded-lg px-3 py-2.5 text-sm text-ink disabled:opacity-50">
-              <option value="openai">{t("settings.openaiOption")}</option>
-              <option value="anthropic">{t("settings.anthropicOption")}</option>
-              <option value="azure">{t("settings.azureOption")}</option>
-              <option value="ollama">{t("settings.ollamaOption")}</option>
+            <select value={provider} onChange={(e) => {
+              const p = e.target.value;
+              setProvider(p);
+              setModel(defaultModelFor(p));
+              if (DEFAULT_BASE_URLS[p]) setBaseUrl(DEFAULT_BASE_URLS[p]);
+              else if (!["openai", "anthropic", "azure", "ollama", "google"].includes(p)) setBaseUrl("");
+            }} disabled={!isAdmin} className="w-full bg-s2 border border-edge rounded-lg px-3 py-2.5 text-sm text-ink disabled:opacity-50">
+              <optgroup label={t("settings.providerGroupGlobal")}>
+                <option value="openai">{t("settings.openaiOption")}</option>
+                <option value="anthropic">{t("settings.anthropicOption")}</option>
+                <option value="google">{t("settings.googleOption")}</option>
+                <option value="azure">{t("settings.azureOption")}</option>
+              </optgroup>
+              <optgroup label={t("settings.providerGroupCN")}>
+                <option value="moonshot">Moonshot (Kimi)</option>
+                <option value="deepseek">DeepSeek</option>
+                <option value="zhipu">{t("settings.zhipuOption")}</option>
+                <option value="qwen">{t("settings.qwenOption")}</option>
+                <option value="baichuan">{t("settings.baichuanOption")}</option>
+                <option value="minimax">MiniMax</option>
+                <option value="yi">{t("settings.yiOption")}</option>
+                <option value="stepfun">{t("settings.stepfunOption")}</option>
+              </optgroup>
+              <optgroup label={t("settings.providerGroupOther")}>
+                <option value="ollama">{t("settings.ollamaOption")}</option>
+                <option value="custom">{t("settings.customProviderOption")}</option>
+              </optgroup>
             </select>
           </div>
 
-          {/* Anthropic: just API key */}
-          {provider === "anthropic" && (
+          {/* API key providers: Anthropic + all CN providers + custom */}
+          {["anthropic", "moonshot", "deepseek", "zhipu", "qwen", "baichuan", "minimax", "yi", "stepfun", "custom"].includes(provider) && (
             <div>
               <label className="block text-sm text-ink-2 mb-1">{t("settings.apiKeyLabel")}</label>
               <input value={apiKey} onChange={(e) => setApiKey(e.target.value)} type="password" disabled={!isAdmin} className="w-full bg-s2 border border-edge rounded-lg px-3 py-2.5 text-sm text-ink placeholder:text-ink-3 focus:border-brand transition-colors disabled:opacity-50" />
@@ -476,7 +676,7 @@ export function Settings() {
           {provider !== "azure" && (
             <div>
               <label className="block text-sm text-ink-2 mb-1">{t("settings.baseUrlLabel")}</label>
-              <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} disabled={!isAdmin} placeholder={provider === "ollama" ? t("settings.ollamaPlaceholder") : t("settings.defaultPlaceholder")} className="w-full bg-s2 border border-edge rounded-lg px-3 py-2.5 text-sm text-ink placeholder:text-ink-3 focus:border-brand transition-colors disabled:opacity-50" />
+              <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} disabled={!isAdmin} placeholder={DEFAULT_BASE_URLS[provider] || (provider === "ollama" ? t("settings.ollamaPlaceholder") : t("settings.defaultPlaceholder"))} className="w-full bg-s2 border border-edge rounded-lg px-3 py-2.5 text-sm text-ink placeholder:text-ink-3 focus:border-brand transition-colors disabled:opacity-50" />
             </div>
           )}
           {isAdmin && (
@@ -596,49 +796,46 @@ export function Settings() {
           </div>
 
           {scanMsg && <p className={`text-sm mb-3 ${scanMsg.includes("Error") || scanMsg.includes("No OpenClaw") ? "text-warn" : "text-ok"}`}>{scanMsg}</p>}
-          {installMsg && <p className={`text-sm mb-3 ${installMsg.includes("successfully") ? "text-ok" : "text-danger"}`}>{installMsg}</p>}
+          {installMsg && <p className={`text-sm mb-3 ${installError ? "text-danger" : "text-ok"}`}>{installMsg}</p>}
 
           {hosts.length === 0 && !showAddHost && (
             <p className="text-sm text-ink-3">{t("settings.noHostsConfigured")}</p>
           )}
 
           {hosts.length > 0 && (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-edge text-ink-2">
-                  <th className="text-left py-2">{t("settings.hostLabelHeader")}</th>
-                  <th className="text-left py-2">{t("settings.hostHeader")}</th>
-                  <th className="text-left py-2">{t("settings.authHeader")}</th>
-                  <th className="text-left py-2">{t("settings.statusHeader")}</th>
-                  <th className="text-left py-2">{t("settings.lastScanHeader")}</th>
-                  <th className="text-right py-2">{t("settings.actionsHeader")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {hosts.map((h) => {
-                  const hasInstances = instanceHostIds.has(h.id);
-                  return (
-                  <tr key={h.id} className="border-b border-edge/50">
-                    <td className="py-2">{h.label}</td>
-                    <td className="py-2 text-ink-2">{h.username}@{h.host}:{h.port}</td>
-                    <td className="py-2 text-ink-2 text-xs">{h.authMethod === "password" ? t("settings.passwordAuth") : t("settings.keyAuth")}</td>
-                    <td className="py-2 text-xs">
-                      {hasInstances
-                        ? <span className="text-ok">{t("settings.hostRunning")}</span>
-                        : h.last_scan_at
-                          ? <span className="text-warn">{t("settings.hostNotInstalled")}</span>
-                          : <span className="text-ink-3">{t("settings.hostUnknown")}</span>
-                      }
-                    </td>
-                    <td className="py-2 text-xs">
-                      {h.last_scan_error
-                        ? <span className="text-danger" title={h.last_scan_error}>{t("common.error")}</span>
-                        : h.last_scan_at
-                          ? <span className="text-ink-3">{h.last_scan_at}</span>
-                          : <span className="text-ink-3">{t("common.never")}</span>
-                      }
-                    </td>
-                    <td className="py-2 text-right flex justify-end gap-2">
+            <div className="space-y-3">
+              {hosts.map((h) => {
+                const hasInstances = instanceHostIds.has(h.id);
+                return (
+                  <div key={h.id} className="bg-s2 border border-edge/50 rounded-lg p-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-3">
+                        <span className="font-medium text-ink">{h.label}</span>
+                        <span className="text-sm text-ink-3 font-mono">{h.username}@{h.host}:{h.port}</span>
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-s3 text-ink-3">{h.authMethod === "password" ? t("settings.passwordAuth") : t("settings.keyAuth")}</span>
+                        {hasInstances
+                          ? <span className="text-xs px-1.5 py-0.5 rounded bg-ok/10 text-ok">{t("settings.hostRunning")}</span>
+                          : h.last_scan_at
+                            ? <span className="text-xs px-1.5 py-0.5 rounded bg-warn/10 text-warn">{t("settings.hostNotInstalled")}</span>
+                            : <span className="text-xs px-1.5 py-0.5 rounded bg-s3 text-ink-3">{t("settings.hostUnknown")}</span>
+                        }
+                      </div>
+                      <span className="text-xs text-ink-3">
+                        {h.last_scan_error
+                          ? <span className="text-danger" title={h.last_scan_error}>{t("common.error")}</span>
+                          : h.last_scan_at
+                            ? h.last_scan_at
+                            : t("common.never")
+                        }
+                      </span>
+                    </div>
+                    {installing === h.id && installStep && (
+                      <div className="mb-2 flex items-center gap-2 px-3 py-2 rounded bg-brand/10 border border-brand/20 animate-pulse">
+                        <svg className="animate-spin h-4 w-4 text-brand shrink-0" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                        <span className="text-sm text-brand">{installStep}<AnimatedDots /></span>
+                      </div>
+                    )}
+                    <div className="flex items-center gap-2 flex-wrap">
                       <button
                         onClick={async () => {
                           setScanning(h.id); setScanMsg(null); setInstallMsg(null);
@@ -650,7 +847,6 @@ export function Settings() {
                               setScanMsg(`${h.label}: ${result.discovered} instance(s) found, ${result.added} added`);
                             }
                             get<RemoteHost[]>("/hosts").then(setHosts);
-                            // Refresh instance mapping
                             get<Array<{ id: string }>>("/instances").then((insts) => {
                               const ids = new Set<number>();
                               for (const inst of insts) {
@@ -663,90 +859,77 @@ export function Settings() {
                           finally { setScanning(null); }
                         }}
                         disabled={scanning !== null || installing !== null}
-                        className="text-ok hover:text-ok/80 text-xs disabled:opacity-50"
+                        className="px-3 py-1 text-sm rounded bg-ok/15 text-ok hover:bg-ok/25 disabled:opacity-40"
                       >
-                        {scanning === h.id ? "..." : "Scan"}
+                        {scanning === h.id ? "..." : t("settings.scan")}
                       </button>
                       {!hasInstances && (
                         <button
-                          onClick={async () => {
-                            if (installing !== null) return;
-                            setInstalling(h.id); setInstallMsg(null); setScanMsg(null); setInstallStep(null);
-                            let streamOk = false;
-                            try {
-                              const res = await fetch(`/api/lifecycle/host/${h.id}/install`, {
-                                method: "POST",
-                                credentials: "include",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({}),
-                              });
-                              if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
-                              const reader = res.body.getReader();
-                              const decoder = new TextDecoder();
-                              let buf = "";
-                              while (true) {
-                                const { done, value } = await reader.read();
-                                if (done) break;
-                                buf += decoder.decode(value, { stream: true });
-                                const lines = buf.split("\n");
-                                buf = lines.pop() || "";
-                                for (const line of lines) {
-                                  if (!line.startsWith("data: ")) continue;
-                                  try {
-                                    const ev = JSON.parse(line.slice(6));
-                                    if (ev.done) {
-                                      streamOk = true;
-                                      setInstallMsg(ev.success
-                                        ? `${h.label}: OpenClaw installed successfully. Click Scan to discover instances.`
-                                        : `${h.label}: Install failed`);
-                                      setInstallStep(null);
-                                    } else {
-                                      setInstallStep(`${ev.step}: ${ev.status}${ev.detail ? ` — ${ev.detail}` : ""}`);
-                                    }
-                                  } catch { /* skip malformed */ }
-                                }
-                              }
-                            } catch { /* stream disconnected */ }
-                            // Fallback: if stream broke, poll install-status
-                            if (!streamOk) {
-                              setInstallStep(t("settings.installChecking"));
-                              for (let i = 0; i < 40; i++) {
-                                await new Promise((r) => setTimeout(r, 5000));
-                                try {
-                                  const st = await get<{ status: string; version?: string; detail?: string }>(`/lifecycle/host/${h.id}/install-status`);
-                                  if (st.status === "installed") {
-                                    setInstallMsg(`${h.label}: OpenClaw v${st.version} installed. Click Scan to discover instances.`);
-                                    break;
-                                  } else if (st.status === "installing") {
-                                    setInstallStep(`${t("settings.installing")}... ${st.detail || ""}`);
-                                  } else {
-                                    setInstallMsg(`${h.label}: Install failed`);
-                                    break;
-                                  }
-                                } catch { break; }
-                              }
-                            }
-                            setInstallStep(null);
-                            setInstalling(null);
-                          }}
+                          onClick={() => runHostInstall(h)}
                           disabled={scanning !== null || installing !== null}
-                          className="text-brand hover:text-brand-light text-xs font-medium disabled:opacity-50"
+                          className={`px-3 py-1 text-sm rounded disabled:opacity-40 ${installing === h.id ? "bg-brand/25 text-brand" : "bg-brand/15 text-brand hover:bg-brand/25"}`}
                         >
-                          {installing === h.id ? (installStep || t("settings.installing")) : t("settings.installButton")}
+                          {installing === h.id ? <>{t("settings.installing")}<AnimatedDots /></> : t("settings.installButton")}
+                        </button>
+                      )}
+                      {hasInstances && (
+                        upgradeHostId === h.id ? (
+                          <span className="flex items-center gap-2">
+                            <select
+                              value={upgradeVersion}
+                              onChange={(e) => setUpgradeVersion(e.target.value)}
+                              className="bg-s3 border border-edge rounded px-2 py-1 text-sm text-ink"
+                            >
+                              {Object.entries(hostVersions[h.id]?.distTags || {})
+                                .sort(([a], [b]) => a === "latest" ? -1 : b === "latest" ? 1 : a.localeCompare(b))
+                                .map(([tag, ver]) => (
+                                <option key={tag} value={ver}>{tag === "latest" ? `${ver} (stable)` : `${ver} (${tag})`}</option>
+                              ))}
+                            </select>
+                            <button
+                              onClick={() => { setUpgradeHostId(null); runHostInstall(h, upgradeVersion); }}
+                              disabled={!upgradeVersion || upgradeVersion === hostVersions[h.id]?.installed}
+                              className="px-3 py-1 text-sm rounded bg-brand/15 text-brand hover:bg-brand/25 disabled:opacity-40"
+                            >{t("settings.upgradeConfirm")}</button>
+                            <button onClick={() => setUpgradeHostId(null)} className="px-3 py-1 text-sm rounded text-ink-3 hover:text-ink hover:bg-s3">{t("common.cancel")}</button>
+                          </span>
+                        ) : (
+                          <button
+                            onClick={async () => {
+                              try {
+                                const v = await get<any>(`/lifecycle/host/${h.id}/versions`);
+                                setHostVersions((prev) => ({ ...prev, [h.id]: { installed: v?.openclaw?.installed, latest: v?.openclaw?.latest, distTags: v?.openclaw?.distTags } }));
+                                setUpgradeVersion(v?.openclaw?.latest || "");
+                                setUpgradeHostId(h.id);
+                              } catch { setInstallMsg(`${h.label}: Failed to fetch versions`); }
+                            }}
+                            disabled={scanning !== null || installing !== null}
+                            className={`px-3 py-1 text-sm rounded disabled:opacity-40 ${installing === h.id ? "bg-brand/25 text-brand" : "bg-brand/15 text-brand hover:bg-brand/25"}`}
+                          >
+                            {installing === h.id ? <>{t("settings.upgrading")}<AnimatedDots /></> : t("settings.upgradeButton")}
+                          </button>
+                        )
+                      )}
+                      {hasInstances && (
+                        <button
+                          onClick={() => setConfirmUninstallHost(h)}
+                          disabled={scanning !== null || installing !== null}
+                          className="px-3 py-1 text-sm rounded bg-danger/10 text-danger/70 hover:bg-danger/20 hover:text-danger disabled:opacity-40"
+                        >
+                          {t("settings.uninstallButton")}
                         </button>
                       )}
                       <button
                         onClick={() => setConfirmDeleteHost(h)}
-                        className="text-danger hover:text-danger/80 text-xs"
+                        className="px-3 py-1 text-sm rounded bg-danger/10 text-danger hover:bg-danger/20"
                       >
                         {t("common.delete")}
                       </button>
-                    </td>
-                  </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           )}
 
           {showAddHost && (
@@ -907,6 +1090,19 @@ export function Settings() {
         <p className="text-sm text-ink-2">{t("settings.aboutDescription")}</p>
       </div>
 
+      {confirmUninstallHost && (
+        <ConfirmDialog
+          title={t("settings.uninstallTitle")}
+          message={t("settings.uninstallConfirm", { label: confirmUninstallHost.label })}
+          confirmLabel={t("settings.uninstallButton")}
+          onConfirm={async () => {
+            const h = confirmUninstallHost;
+            setConfirmUninstallHost(null);
+            await runHostUninstall(h);
+          }}
+          onCancel={() => setConfirmUninstallHost(null)}
+        />
+      )}
       {confirmDeleteHost && (
         <ConfirmDialog
           title={t("settings.deleteHost")}

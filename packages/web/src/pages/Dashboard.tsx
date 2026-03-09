@@ -32,15 +32,24 @@ function StatusDot({ status }: { status: string }) {
   );
 }
 
-function InstanceCard({ inst, onRefresh }: { inst: InstanceInfo; onRefresh: () => void }) {
+function InstanceCard({ inst, onRefresh }: { inst: InstanceInfo; onRefresh: () => void | Promise<void> }) {
   const navigate = useNavigate();
   const { t } = useTranslation();
   const [starting, setStarting] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const totalTokens = inst.sessions.reduce((t, s) => t + (s.totalTokens || 0), 0);
   const criticalCount = inst.securityAudit?.filter((a) => a.level === "critical").length || 0;
   const isDown = inst.connection.status === "error" || inst.connection.status === "disconnected";
 
   const [startError, setStartError] = useState<string | null>(null);
+
+  const handleRefresh = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (refreshing) return;
+    setRefreshing(true);
+    try { await onRefresh(); } catch { /* ignore */ }
+    finally { setRefreshing(false); }
+  };
 
   const handleStart = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -84,10 +93,11 @@ function InstanceCard({ inst, onRefresh }: { inst: InstanceInfo; onRefresh: () =
         </div>
         <div className="flex items-center gap-1.5">
           <button
-            onClick={(e) => { e.stopPropagation(); onRefresh(); }}
-            className="text-ink-3 hover:text-ink transition-colors"
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="text-ink-3 hover:text-ink transition-colors disabled:opacity-50"
           >
-            <RefreshCw size={14} />
+            <RefreshCw size={14} className={refreshing ? "animate-spin" : ""} />
           </button>
         </div>
       </div>
