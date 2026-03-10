@@ -203,7 +203,7 @@ export function Usage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <div className="bg-s1 border border-edge rounded-card p-4 shadow-card">
           <p className="text-sm text-ink-2">{t("common.instances")}</p>
           <p className="text-2xl font-bold">{connectedInstances.length}</p>
@@ -213,24 +213,23 @@ export function Usage() {
           <p className="text-2xl font-bold">{totalSessions}</p>
         </div>
         <div className="bg-s1 border border-edge rounded-card p-4 shadow-card">
-          <p className="text-sm text-ink-2">{t("usage.totalTokens")}</p>
-          <p className="text-2xl font-bold">{totalTokens.toLocaleString()}</p>
-        </div>
-        <div className="bg-s1 border border-edge rounded-card p-4 shadow-card">
           <p className="text-sm text-ink-2">{t("usage.inputOutput")}</p>
           <p className="text-lg font-bold">
             <span className="text-cyan">{totalInputTokens.toLocaleString()}</span>
             <span className="text-ink-3 mx-1">/</span>
             <span className="text-ok">{totalOutputTokens.toLocaleString()}</span>
           </p>
+          <p className="text-xs text-ink-3 mt-1">{t("usage.totalTokens")}: {(totalInputTokens + totalOutputTokens).toLocaleString()}</p>
         </div>
         <div className="bg-s1 border border-edge rounded-card p-4 shadow-card">
           <p className="text-sm text-ink-2">{t("usage.estimatedCost")}</p>
-          <p className="text-2xl font-bold text-warn">
-            {instanceStats.some((s) => s.estimatedCost != null)
-              ? `$${instanceStats.reduce((sum, s) => sum + (s.estimatedCost || 0), 0).toFixed(2)}`
-              : "—"}
-          </p>
+          {instanceStats.some((s) => s.estimatedCost != null) ? (
+            <p className="text-2xl font-bold text-warn">
+              ${instanceStats.reduce((sum, s) => sum + (s.estimatedCost || 0), 0).toFixed(2)}
+            </p>
+          ) : (
+            <p className="text-2xl font-bold text-ink-3">—</p>
+          )}
         </div>
       </div>
 
