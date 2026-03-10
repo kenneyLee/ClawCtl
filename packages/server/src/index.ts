@@ -25,6 +25,7 @@ import { HostStore } from "./hosts/store.js";
 import { discoverRemoteInstances } from "./hosts/discovery.js";
 import { ensureTunnel, closeAllTunnels } from "./hosts/tunnel.js";
 import type { LlmConfig } from "./llm/types.js";
+import { fetchPricing } from "./pricing/litellm.js";
 
 const db = initDb();
 const manager = new InstanceManager(db);
@@ -142,6 +143,9 @@ async function start() {
   };
 
   manager.startAutoRefresh();
+
+  // Pre-fetch LiteLLM pricing data in background (1h cache)
+  fetchPricing().then((p) => console.log(`Loaded pricing for ${Object.keys(p).length} models`)).catch(() => {});
 
   const needsSetup = !userStore.hasAnyUser();
   console.log(`ClawCtl starting on http://localhost:${port}`);

@@ -27,7 +27,7 @@ function StatusDot({ status }: { status: string }) {
 
 type Tab = "overview" | "sessions" | "config" | "security" | "agents" | "channels" | "llm" | "control";
 
-function OverviewTab({ inst, onSwitchTab }: { inst: InstanceInfo; onSwitchTab: (tab: Tab) => void }) {
+function OverviewTab({ inst, onSwitchTab, onSelectAgent }: { inst: InstanceInfo; onSwitchTab: (tab: Tab) => void; onSelectAgent: (agentId: string) => void }) {
   const { t } = useTranslation();
   const totalTokens = inst.sessions.reduce((acc, s) => acc + (s.totalTokens || 0), 0);
 
@@ -61,7 +61,11 @@ function OverviewTab({ inst, onSwitchTab }: { inst: InstanceInfo; onSwitchTab: (
           </thead>
           <tbody>
             {inst.agents.map((a) => (
-              <tr key={a.id} className="border-b border-edge/50">
+              <tr
+                key={a.id}
+                onClick={() => onSelectAgent(a.id)}
+                className="border-b border-edge/50 cursor-pointer hover:bg-s2/50 transition-colors"
+              >
                 <td className="p-3 font-mono">{a.id}</td>
                 <td className="p-3">{a.name || "—"}</td>
                 <td className="p-3"><code className="text-cyan">{a.model || "default"}</code></td>
@@ -752,6 +756,23 @@ function LlmTab({ inst }: { inst: InstanceInfo }) {
   const [oauthAuthUrl, setOauthAuthUrl] = useState<string | null>(null);
   const [hasOAuthToken, setHasOAuthToken] = useState(false);
   const [oauthExpiry, setOauthExpiry] = useState<number | null>(null);
+  // Quota & cost state
+  const [quotas, setQuotas] = useState<any[]>([]);
+  const [costEstimate, setCostEstimate] = useState<{ totalCost: number; byModel: Record<string, any>; matched: number; unmatched: number } | null>(null);
+  const [quotaLoading, setQuotaLoading] = useState(false);
+
+  const fetchQuota = async () => {
+    setQuotaLoading(true);
+    try {
+      const [qr, cr] = await Promise.all([
+        get<{ quotas: any[] }>(`/lifecycle/${inst.id}/quota`).catch(() => ({ quotas: [] })),
+        get<any>(`/lifecycle/${inst.id}/cost-estimate`).catch(() => null),
+      ]);
+      setQuotas(qr.quotas || []);
+      if (cr && !cr.error) setCostEstimate(cr);
+    } catch { /* ignore */ }
+    setQuotaLoading(false);
+  };
 
   const fetchProviders = async () => {
     setLoading(true);
@@ -766,7 +787,7 @@ function LlmTab({ inst }: { inst: InstanceInfo }) {
     }
   };
 
-  useEffect(() => { fetchProviders(); }, [inst.id]);
+  useEffect(() => { fetchProviders(); fetchQuota(); }, [inst.id]);
 
   const saveProviders = async (next: Record<string, any>) => {
     setSaving(true);
@@ -863,6 +884,83 @@ function LlmTab({ inst }: { inst: InstanceInfo }) {
 
   return (
     <div className="space-y-6">
+      {/* Quota & Cost Overview */}
+      {(quotas.length > 0 || costEstimate) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* OAuth Quota */}
+          {quotas.map((q, qi) => (
+            <div key={qi} className="bg-s1 border border-edge rounded-card p-4 shadow-card">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-ink-2 uppercase tracking-wider">{t("instance.llm.quota")}</h3>
+                <span className="text-xs text-ink-3">{q.provider}{q.plan ? ` (${q.plan})` : ""}</span>
+              </div>
+              {q.error ? (
+                <p className="text-xs text-danger">{q.error}</p>
+              ) : (
+                <div className="space-y-3">
+                  {q.windows?.map((w: any, wi: number) => {
+                    const remaining = 100 - (w.usedPercent || 0);
+                    const resetDate = w.resetAt ? new Date(w.resetAt) : null;
+                    const barColor = remaining > 50 ? "bg-ok" : remaining > 20 ? "bg-warn" : "bg-danger";
+                    return (
+                      <div key={wi}>
+                        <div className="flex justify-between text-xs mb-1">
+                          <span className="text-ink-2">{w.label} {t("instance.llm.window")}</span>
+                          <span className={remaining > 20 ? "text-ok" : "text-danger"}>
+                            {remaining.toFixed(1)}% {t("instance.llm.remaining")}
+                          </span>
+                        </div>
+                        <div className="h-2 bg-s2 rounded-full overflow-hidden">
+                          <div className={`h-full ${barColor} rounded-full transition-all`} style={{ width: `${w.usedPercent || 0}%` }} />
+                        </div>
+                        {resetDate && (
+                          <p className="text-[10px] text-ink-3 mt-0.5">{t("instance.llm.resetsAt")} {resetDate.toLocaleString()}</p>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {q.credits != null && (
+                    <p className="text-xs text-ink-2">{t("instance.llm.credits")}: ${q.credits.toFixed(2)}</p>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+
+          {/* Cost Estimate */}
+          {costEstimate && costEstimate.totalCost > 0 && (
+            <div className="bg-s1 border border-edge rounded-card p-4 shadow-card">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-ink-2 uppercase tracking-wider">{t("instance.llm.costEstimate")}</h3>
+                <span className="text-lg font-bold text-warn">${costEstimate.totalCost.toFixed(4)}</span>
+              </div>
+              <div className="space-y-1.5">
+                {Object.entries(costEstimate.byModel)
+                  .sort(([, a]: any, [, b]: any) => (b.cost || 0) - (a.cost || 0))
+                  .map(([model, stats]: [string, any]) => (
+                    <div key={model} className="flex items-center justify-between text-xs">
+                      <span className="text-ink-2 font-mono truncate mr-2">{model || "unknown"}</span>
+                      <div className="flex gap-3 shrink-0">
+                        <span className="text-ink-3">{stats.sessions} {t("instance.llm.sessionCount")}</span>
+                        <span className="text-ink-3">{((stats.inputTokens + stats.outputTokens) / 1000).toFixed(0)}k tok</span>
+                        <span className={stats.cost != null ? "text-warn" : "text-ink-3"}>
+                          {stats.cost != null ? `$${stats.cost.toFixed(4)}` : "—"}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+              {costEstimate.unmatched > 0 && (
+                <p className="text-[10px] text-ink-3 mt-2">{t("instance.llm.unmatchedModels", { count: costEstimate.unmatched })}</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+      {quotaLoading && !quotas.length && !costEstimate && (
+        <div className="text-xs text-ink-3 text-center py-2 animate-pulse">{t("instance.llm.loadingQuota")}</div>
+      )}
+
       <div className="bg-s1 border border-edge rounded-card shadow-card">
         <div className="flex items-center justify-between p-4 border-b border-edge">
           <h3 className="text-lg font-semibold text-ink">{t("instance.llm.llmProviders")}</h3>
@@ -2208,6 +2306,7 @@ export function Instance() {
   const { id } = useParams<{ id: string }>();
   const { instances, loading, refresh } = useInstances();
   const [activeTab, setActiveTab] = useState<Tab>("overview");
+  const [selectedAgentId, setSelectedAgentId] = useState<string | undefined>();
   const [searchParams] = useSearchParams();
 
   useEffect(() => {
@@ -2266,7 +2365,7 @@ export function Instance() {
           {tabs.map((tab) => (
             <button
               key={tab.key}
-              onClick={() => setActiveTab(tab.key)}
+              onClick={() => { setSelectedAgentId(undefined); setActiveTab(tab.key); }}
               className={`px-3 py-1.5 text-sm ${activeTab === tab.key ? "border-b-2 border-brand text-brand" : "text-ink-3 hover:text-ink"}`}
             >
               {tab.label}
@@ -2275,11 +2374,11 @@ export function Instance() {
         </div>
 
         <div className="flex-1 overflow-auto">
-          {activeTab === "overview" && <OverviewTab inst={inst} onSwitchTab={setActiveTab} />}
+          {activeTab === "overview" && <OverviewTab inst={inst} onSwitchTab={setActiveTab} onSelectAgent={(agentId) => { setSelectedAgentId(agentId); setActiveTab("agents"); }} />}
           {activeTab === "sessions" && <SessionsTab inst={inst} />}
           {activeTab === "config" && <ConfigTab inst={inst} />}
           {activeTab === "security" && <SecurityTab inst={inst} />}
-          {activeTab === "agents" && <AgentsTab inst={inst} initialAgentId={searchParams.get("agent") || undefined} onSwitchTab={setActiveTab} />}
+          {activeTab === "agents" && <AgentsTab inst={inst} initialAgentId={selectedAgentId || searchParams.get("agent") || undefined} onSwitchTab={setActiveTab} />}
           {activeTab === "channels" && <ChannelsTab inst={inst} />}
           {activeTab === "llm" && <LlmTab inst={inst} />}
           {activeTab === "control" && <ControlTab inst={inst} />}

@@ -13,6 +13,8 @@ import { SnapshotStore } from "../lifecycle/snapshot.js";
 import { extractModels, mergeAgentConfig, removeAgent } from "../lifecycle/agent-config.js";
 import { mergeChannelAccountConfig, deleteChannelConfig } from "../lifecycle/channel-config.js";
 import { getOAuthStatus, clearOAuthFlow } from "../llm/openai-oauth.js";
+import { fetchPricing, estimateCost } from "../pricing/litellm.js";
+import { fetchCodexQuotaViaSSH } from "../pricing/codex-quota.js";
 
 const VERSION_CACHE_TTL = 60_000; // 60s
 const versionCache = new Map<string, { data: any; time: number }>();
@@ -902,6 +904,105 @@ WantedBy=default.target`;
       auditLog(db, c, "lifecycle.doctor", `${success ? "Doctor repair completed" : "Doctor repair failed"}`, id);
       await s.write(`data: ${JSON.stringify({ done: true, success })}\n\n`);
     });
+  });
+
+  // --- Quota (Codex OAuth) ---
+
+  app.get("/:id/quota", async (c) => {
+    const id = c.req.param("id");
+    if (!manager.get(id)) return c.json({ error: "instance not found" }, 404);
+    const profile = profileFromInstanceId(id);
+    const configDir = getConfigDir(profile);
+    const exec = getExecutor(id, hostStore);
+
+    try {
+      // Read auth profiles to find OAuth tokens
+      const config = await readRemoteConfig(exec, configDir);
+      const agentList: any[] = config?.agents?.list || [];
+      const agentId = agentList[0]?.id || "main";
+      const profiles = await readAuthProfiles(exec, configDir, agentId);
+
+      const results: any[] = [];
+      for (const [key, cred] of Object.entries(profiles.profiles || {}) as [string, any][]) {
+        if (cred.type === "oauth" && cred.access) {
+          try {
+            const quota = await fetchCodexQuotaViaSSH(exec, cred.access, cred.accountId);
+            results.push({ profileKey: key, provider: cred.provider || key.split(":")[0], ...quota });
+          } catch (err: any) {
+            results.push({ profileKey: key, provider: cred.provider || key.split(":")[0], windows: [], error: err.message });
+          }
+        }
+      }
+      return c.json({ quotas: results });
+    } catch (err: any) {
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
+  // --- Cost Estimate (LiteLLM pricing) ---
+
+  app.get("/:id/cost-estimate", async (c) => {
+    const id = c.req.param("id");
+    const inst = manager.get(id);
+    if (!inst) return c.json({ error: "instance not found" }, 404);
+
+    try {
+      const pricing = await fetchPricing();
+      const sessions = inst.sessions || [];
+
+      let totalCost = 0;
+      let matched = 0;
+      let unmatched = 0;
+      const byModel: Record<string, { inputTokens: number; outputTokens: number; sessions: number; cost: number | null }> = {};
+
+      for (const s of sessions) {
+        const model = s.model || "";
+        const input = s.inputTokens || 0;
+        const output = s.outputTokens || 0;
+
+        if (!byModel[model]) byModel[model] = { inputTokens: 0, outputTokens: 0, sessions: 0, cost: null };
+        byModel[model].inputTokens += input;
+        byModel[model].outputTokens += output;
+        byModel[model].sessions++;
+      }
+
+      // Calculate cost per model
+      for (const [model, stats] of Object.entries(byModel)) {
+        const cost = estimateCost(pricing, model, stats.inputTokens, stats.outputTokens);
+        stats.cost = cost;
+        if (cost !== null) {
+          totalCost += cost;
+          matched++;
+        } else {
+          unmatched++;
+        }
+      }
+
+      return c.json({ totalCost, byModel, matched, unmatched });
+    } catch (err: any) {
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
+  // --- Pricing data (for frontend display) ---
+
+  app.get("/pricing/models", async (c) => {
+    try {
+      const pricing = await fetchPricing();
+      // Return a subset: only models with pricing data, trimmed for frontend
+      const models: Record<string, { input: number; output: number }> = {};
+      for (const [key, val] of Object.entries(pricing)) {
+        if (val.input_cost_per_token && val.output_cost_per_token) {
+          models[key] = {
+            input: val.input_cost_per_token * 1_000_000,  // convert to per-1M tokens
+            output: val.output_cost_per_token * 1_000_000,
+          };
+        }
+      }
+      return c.json({ models, count: Object.keys(models).length });
+    } catch (err: any) {
+      return c.json({ error: err.message }, 500);
+    }
   });
 
   // --- Diagnose ---

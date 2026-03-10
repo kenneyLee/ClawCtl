@@ -330,7 +330,9 @@
     "agentHeader": "Agent",
     "modelHeader": "Model",
     "toolsHeader": "Tools",
-    "configAction": "Config"
+    "configAction": "Config",
+    "estimatedCost": "Estimated Cost",
+    "estimatedCostHeader": "Est. Cost"
   },
   "instance": {
     "loadingInstance": "Loading instance...",
@@ -429,7 +431,16 @@
       "savingTokens": "Saving tokens to instance...",
       "oauthConfigured": "OpenAI OAuth configured successfully",
       "oauthNote": "Uses OpenAI Codex OAuth for ChatGPT Plus/Pro subscriptions. Tokens saved to instance config.",
-      "openaiOauthConfigured": "OpenAI OAuth configured"
+      "openaiOauthConfigured": "OpenAI OAuth configured",
+      "quota": "Quota",
+      "window": "window",
+      "remaining": "remaining",
+      "resetsAt": "Resets at",
+      "credits": "Credits",
+      "costEstimate": "Estimated Cost",
+      "sessionCount": "sessions",
+      "unmatchedModels": "{{count}} model(s) without pricing data",
+      "loadingQuota": "Loading quota & cost data..."
     },
     "control": {
       "processControl": "Process Control",

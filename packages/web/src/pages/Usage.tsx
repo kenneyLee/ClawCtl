@@ -1,9 +1,10 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { Settings } from "lucide-react";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from "recharts";
 import { useInstances } from "../hooks/useInstances";
+import { get } from "../lib/api";
 
 const INSTANCE_COLORS = ["#22d3ee", "#34d399", "#818cf8", "#f472b6", "#fb923c", "#facc15", "#a78bfa", "#4ade80"];
 
@@ -22,8 +23,44 @@ export function Usage() {
   const [timeRange, setTimeRange] = useState<TimeRange>("all");
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
+  const [pricing, setPricing] = useState<Record<string, { input: number; output: number }>>({});
+
+  useEffect(() => {
+    get<{ models: Record<string, { input: number; output: number }> }>("/lifecycle/pricing/models")
+      .then((r) => setPricing(r.models || {}))
+      .catch(() => { /* ignore */ });
+  }, []);
 
   const connectedInstances = instances.filter((i) => i.connection.status === "connected");
+
+  /** Estimate cost in USD for a model using LiteLLM pricing (per 1M tokens) */
+  const lookupCost = (model: string, inputTokens: number, outputTokens: number): number | null => {
+    if (!model || Object.keys(pricing).length === 0) return null;
+    // Try exact match, then with provider prefix, then model name only
+    const tryKeys = [model];
+    const parts = model.split("/");
+    if (parts.length > 1) {
+      tryKeys.push(parts.slice(1).join("/"));
+      // Map OpenClaw prefixes to LiteLLM
+      const providerMap: Record<string, string[]> = {
+        "openai-codex": ["openai/"], openai: ["openai/"], anthropic: ["anthropic/"],
+        google: ["gemini/", "google/"], deepseek: ["deepseek/"],
+      };
+      for (const p of providerMap[parts[0]] || [`${parts[0]}/`]) {
+        tryKeys.push(p + parts.slice(1).join("/"));
+      }
+    }
+    for (const key of tryKeys) {
+      const p = pricing[key];
+      if (p) return (inputTokens * p.input + outputTokens * p.output) / 1_000_000;
+      // Case-insensitive fallback
+      const lower = key.toLowerCase();
+      for (const [k, v] of Object.entries(pricing)) {
+        if (k.toLowerCase() === lower) return (inputTokens * v.input + outputTokens * v.output) / 1_000_000;
+      }
+    }
+    return null;
+  };
 
   const cutoff = timeRange === "custom"
     ? (customFrom ? new Date(customFrom).getTime() : 0)
@@ -68,6 +105,14 @@ export function Usage() {
         dailyInstMap.set(key, entry);
       }
 
+      // Estimate cost per session
+      let instCost = 0;
+      let hasCost = false;
+      for (const s of sessions) {
+        const c = lookupCost(s.model || "", s.inputTokens || 0, s.outputTokens || 0);
+        if (c !== null) { instCost += c; hasCost = true; }
+      }
+
       return {
         id: inst.id,
         label,
@@ -77,6 +122,7 @@ export function Usage() {
         totalTokens: total,
         agentCount: inst.agents.length,
         models: [...new Set(inst.agents.map((a) => a.model).filter(Boolean))],
+        estimatedCost: hasCost ? instCost : null as number | null,
       };
     });
 
@@ -95,7 +141,7 @@ export function Usage() {
     const dailyRows = [...dailyInstMap.values()].sort((a, b) => a.date.localeCompare(b.date) || a.instance.localeCompare(b.instance));
 
     return { totalSessions, totalInputTokens, totalOutputTokens, totalTokens, instanceStats, dailyChart, instLabels, dailyRows };
-  }, [connectedInstances, cutoff, cutoffEnd]);
+  }, [connectedInstances, cutoff, cutoffEnd, pricing]);
 
   // Model comparison across all instances
   const modelComparison = connectedInstances.flatMap((inst) =>
@@ -157,7 +203,7 @@ export function Usage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
         <div className="bg-s1 border border-edge rounded-card p-4 shadow-card">
           <p className="text-sm text-ink-2">{t("common.instances")}</p>
           <p className="text-2xl font-bold">{connectedInstances.length}</p>
@@ -176,6 +222,14 @@ export function Usage() {
             <span className="text-cyan">{totalInputTokens.toLocaleString()}</span>
             <span className="text-ink-3 mx-1">/</span>
             <span className="text-ok">{totalOutputTokens.toLocaleString()}</span>
+          </p>
+        </div>
+        <div className="bg-s1 border border-edge rounded-card p-4 shadow-card">
+          <p className="text-sm text-ink-2">{t("usage.estimatedCost")}</p>
+          <p className="text-2xl font-bold text-warn">
+            {instanceStats.some((s) => s.estimatedCost != null)
+              ? `$${instanceStats.reduce((sum, s) => sum + (s.estimatedCost || 0), 0).toFixed(2)}`
+              : "—"}
           </p>
         </div>
       </div>
@@ -345,6 +399,7 @@ export function Usage() {
                 <th className="text-right p-3">{t("usage.inputTokensHeader")}</th>
                 <th className="text-right p-3">{t("usage.outputTokensHeader")}</th>
                 <th className="text-right p-3">{t("usage.totalTokensHeader")}</th>
+                <th className="text-right p-3">{t("usage.estimatedCostHeader")}</th>
                 <th className="text-left p-3">{t("usage.modelsHeader")}</th>
               </tr>
             </thead>
@@ -356,6 +411,7 @@ export function Usage() {
                   <td className="p-3 text-right text-cyan">{row.inputTokens.toLocaleString()}</td>
                   <td className="p-3 text-right text-ok">{row.outputTokens.toLocaleString()}</td>
                   <td className="p-3 text-right font-medium">{row.totalTokens.toLocaleString()}</td>
+                  <td className="p-3 text-right text-warn">{row.estimatedCost != null ? `$${row.estimatedCost.toFixed(4)}` : "—"}</td>
                   <td className="p-3">
                     {row.models.map((m) => (
                       <code key={m} className="text-xs text-cyan bg-cyan-dim px-1.5 py-0.5 rounded mr-1">{m}</code>
@@ -370,6 +426,11 @@ export function Usage() {
                   <td className="p-3 text-right text-cyan">{totalInputTokens.toLocaleString()}</td>
                   <td className="p-3 text-right text-ok">{totalOutputTokens.toLocaleString()}</td>
                   <td className="p-3 text-right">{totalTokens.toLocaleString()}</td>
+                  <td className="p-3 text-right text-warn">
+                    {instanceStats.some((s) => s.estimatedCost != null)
+                      ? `$${instanceStats.reduce((sum, s) => sum + (s.estimatedCost || 0), 0).toFixed(4)}`
+                      : "—"}
+                  </td>
                   <td className="p-3" />
                 </tr>
               )}

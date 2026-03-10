@@ -330,7 +330,9 @@
     "agentHeader": "智能体",
     "modelHeader": "模型",
     "toolsHeader": "工具",
-    "configAction": "配置"
+    "configAction": "配置",
+    "estimatedCost": "预估费用",
+    "estimatedCostHeader": "预估费用"
   },
   "instance": {
     "loadingInstance": "正在加载实例...",
@@ -429,7 +431,16 @@
       "savingTokens": "正在保存令牌到实例...",
       "oauthConfigured": "OpenAI OAuth 配置成功",
       "oauthNote": "使用 OpenAI Codex OAuth 进行 ChatGPT Plus/Pro 订阅认证。令牌保存到实例配置中。",
-      "openaiOauthConfigured": "OpenAI OAuth 已配置"
+      "openaiOauthConfigured": "OpenAI OAuth 已配置",
+      "quota": "额度",
+      "window": "窗口",
+      "remaining": "剩余",
+      "resetsAt": "重置于",
+      "credits": "余额",
+      "costEstimate": "预估费用",
+      "sessionCount": "会话",
+      "unmatchedModels": "{{count}} 个模型无计费数据",
+      "loadingQuota": "加载额度与费用数据..."
     },
     "control": {
       "processControl": "进程控制",
