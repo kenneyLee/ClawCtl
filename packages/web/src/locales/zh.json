@@ -67,6 +67,7 @@
     "config": "配置",
     "tools": "工具",
     "operations": "操作",
+    "skills": "Skill 市场",
     "settings": "设置"
   },
   "layout": {
@@ -726,6 +727,41 @@
       "configNewAgent": "如何配置新的智能体？",
       "securityBestPractices": "安全最佳实践有哪些？",
       "explainBindings": "解释频道绑定配置"
+    }
+  },
+  "skills": {
+    "title": "Skill 市场",
+    "searchPlaceholder": "搜索 Skill...",
+    "allCategories": "全部分类",
+    "sceneTemplates": "场景模板",
+    "showAll": "展开全部",
+    "showLess": "收起",
+    "allSkills": "全部 Skill",
+    "skills": "个技能",
+    "install": "安装",
+    "installAll": "一键安装",
+    "installDialog": {
+      "title": "安装 Skill",
+      "selectAgents": "选择目标 Agent",
+      "noInstances": "没有已连接的实例",
+      "selectAll": "全选",
+      "confirm": "安装到 {{count}} 个 Agent",
+      "installing": "安装中...",
+      "success": "Skill 安装成功",
+      "failed": "安装失败：{{error}}"
+    },
+    "bundled": "内置",
+    "clawhub": "ClawHub",
+    "noResults": "未找到匹配的 Skill",
+    "categories": {
+      "dev": "开发",
+      "social": "社交",
+      "productivity": "效率",
+      "creative": "创意",
+      "communication": "通讯",
+      "iot": "IoT & 智能家居",
+      "utility": "工具",
+      "ai": "AI & 机器学习"
     }
   }
 }

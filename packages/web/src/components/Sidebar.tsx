@@ -10,6 +10,7 @@ import {
   FileCode2,
   Wrench,
   Play,
+  Store,
   Settings,
   PanelLeftClose,
   PanelLeftOpen,
@@ -24,6 +25,7 @@ const nav = [
   { to: "/security", tKey: "sidebar.security", icon: ShieldCheck },
   { to: "/config", tKey: "sidebar.config", icon: FileCode2 },
   { to: "/tools", tKey: "sidebar.tools", icon: Wrench },
+  { to: "/skills", tKey: "sidebar.skills", icon: Store },
   { to: "/operations", tKey: "sidebar.operations", icon: Play },
 ];
 

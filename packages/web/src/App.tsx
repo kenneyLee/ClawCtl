@@ -13,6 +13,7 @@ import { Settings } from "./pages/Settings";
 import { Instance } from "./pages/Instance";
 import { Monitoring } from "./pages/Monitoring";
 import { Channels } from "./pages/Channels";
+import { Skills } from "./pages/Skills";
 
 function AuthGate({ children }: { children: React.ReactNode }) {
   const auth = useAuthProvider();
@@ -53,6 +54,7 @@ export function App() {
             <Route path="security" element={<Security />} />
             <Route path="config" element={<Config />} />
             <Route path="tools" element={<Tools />} />
+            <Route path="skills" element={<Skills />} />
             <Route path="monitoring" element={<Monitoring />} />
             <Route path="operations" element={<Operations />} />
             <Route path="instance/:id" element={<Instance />} />

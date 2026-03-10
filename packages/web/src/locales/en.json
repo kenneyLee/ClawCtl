@@ -67,6 +67,7 @@
     "config": "Config",
     "tools": "Tools",
     "operations": "Operations",
+    "skills": "Skill Market",
     "settings": "Settings"
   },
   "layout": {
@@ -726,6 +727,41 @@
       "configNewAgent": "How do I configure a new agent?",
       "securityBestPractices": "What are the security best practices?",
       "explainBindings": "Explain channel binding config"
+    }
+  },
+  "skills": {
+    "title": "Skill Market",
+    "searchPlaceholder": "Search skills...",
+    "allCategories": "All Categories",
+    "sceneTemplates": "Scene Templates",
+    "showAll": "Show All",
+    "showLess": "Show Less",
+    "allSkills": "All Skills",
+    "skills": "skills",
+    "install": "Install",
+    "installAll": "Install All",
+    "installDialog": {
+      "title": "Install Skills",
+      "selectAgents": "Select target agents",
+      "noInstances": "No connected instances",
+      "selectAll": "Select All",
+      "confirm": "Install to {{count}} agent(s)",
+      "installing": "Installing...",
+      "success": "Skills installed successfully",
+      "failed": "Installation failed: {{error}}"
+    },
+    "bundled": "Bundled",
+    "clawhub": "ClawHub",
+    "noResults": "No skills found",
+    "categories": {
+      "dev": "Development",
+      "social": "Social",
+      "productivity": "Productivity",
+      "creative": "Creative",
+      "communication": "Communication",
+      "iot": "IoT & Smart Home",
+      "utility": "Utility",
+      "ai": "AI & ML"
     }
   }
 }
