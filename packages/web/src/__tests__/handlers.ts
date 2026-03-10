@@ -106,6 +106,24 @@ export const handlers = [
   http.post("/api/digest", () =>
     HttpResponse.json({ error: "LLM not configured" }, { status: 400 })
   ),
+  http.get("/api/skills", () =>
+    HttpResponse.json({
+      bundled: [
+        { name: "github", description: "GitHub operations", source: "bundled", emoji: "\uD83D\uDC19", category: "dev", tags: ["github"] },
+        { name: "notion", description: "Notion API", source: "bundled", emoji: "\uD83D\uDCDD", category: "productivity", tags: ["notion"] },
+      ],
+      tags: ["github", "notion"],
+      categories: ["dev", "productivity"],
+    })
+  ),
+  http.get("/api/skills/templates", () =>
+    HttpResponse.json({
+      templates: [
+        { id: "engineering", name: "Engineering", name_zh: "\u5DE5\u7A0B\u5F00\u53D1", description: "Dev tools", description_zh: "\u5F00\u53D1\u5DE5\u5177", icon: "wrench", skills: [{ name: "github", source: "bundled", note: "PR/Issue/CI" }], builtin: 1, sort_order: 1 },
+      ],
+    })
+  ),
+  http.post("/api/skills/install", () => HttpResponse.json({ ok: true })),
 ];
 
 export const server = setupServer(...handlers);
