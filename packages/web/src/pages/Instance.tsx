@@ -906,7 +906,10 @@ function LlmTab({ inst }: { inst: InstanceInfo }) {
         {quotas.map((q, qi) => (
           <div key={qi} className="bg-s1 border border-edge rounded-card p-4 shadow-card">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold text-ink-2 uppercase tracking-wider">{q.displayName || q.provider}</h3>
+              <div>
+                <h3 className="text-sm font-semibold text-ink-2 uppercase tracking-wider">{q.displayName || q.provider}</h3>
+                {q.plan && q.account && <p className="text-[11px] text-ink-3 mt-0.5">{q.account}</p>}
+              </div>
               {q.plan && <span className="text-xs text-ink-3">{q.plan}</span>}
             </div>
             {q.error ? (

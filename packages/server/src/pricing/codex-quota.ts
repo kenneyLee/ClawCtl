@@ -19,6 +19,7 @@ export interface ProviderQuota {
   balance?: number;      // USD or CNY
   currency?: string;     // "USD" | "CNY"
   plan?: string;
+  account?: string;      // email or readable account identifier (subscriptions only)
   error?: string;
 }
 
@@ -69,7 +70,7 @@ export async function fetchCodexQuota(exec: Exec, accessToken: string, accountId
     if (!isNaN(bal)) balance = bal;
   }
 
-  return { provider: "openai-codex", displayName: "OpenAI Codex", windows, balance, currency: "USD", plan: data.plan_type || undefined };
+  return { provider: "openai-codex", displayName: "OpenAI Codex", windows, balance, currency: "USD", plan: data.plan_type || undefined, account: data.email || undefined };
 }
 
 // ─── DeepSeek ─────────────────────────────────────────────────
