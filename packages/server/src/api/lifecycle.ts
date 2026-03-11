@@ -8,7 +8,8 @@ import { auditLog } from "../audit.js";
 import { getExecutor, getHostExecutor } from "../executor/factory.js";
 import { getProcessStatus, stopProcess, startProcess, restartProcess } from "../lifecycle/service.js";
 import { checkNodeVersion, getVersions, streamInstall, streamUninstall, streamChannelCreate } from "../lifecycle/install.js";
-import { readRemoteConfig, writeRemoteConfig, readAuthProfiles, writeAuthProfiles, getConfigDir, profileFromInstanceId } from "../lifecycle/config.js";
+import { readRemoteConfig, writeRemoteConfig, readAuthProfiles, writeAuthProfiles, deleteAuthProfile, getConfigDir, profileFromInstanceId } from "../lifecycle/config.js";
+import { verifyProviderKey, maskKey } from "../lifecycle/verify.js";
 import { SnapshotStore } from "../lifecycle/snapshot.js";
 import { extractModels, mergeAgentConfig, removeAgent } from "../lifecycle/agent-config.js";
 import { mergeChannelAccountConfig, deleteChannelConfig } from "../lifecycle/channel-config.js";
@@ -475,6 +476,175 @@ export function lifecycleRoutes(hostStore: HostStore, manager: InstanceManager, 
       return c.json({ ok: true });
     } catch (err: any) {
       auditLog(db, c, "lifecycle.providers", `FAILED: ${err.message}`, id);
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
+  // --- Key management endpoints ---
+  app.get("/:id/keys", async (c) => {
+    const id = c.req.param("id");
+    if (!manager.get(id)) return c.json({ error: "instance not found" }, 404);
+    const profile = profileFromInstanceId(id);
+    const configDir = getConfigDir(profile);
+    const exec = getExecutor(id, hostStore);
+    try {
+      const config = await readRemoteConfig(exec, configDir);
+      const agentList: any[] = config?.agents?.list || [];
+      const agentId = agentList[0]?.id || "main";
+      const authData = await readAuthProfiles(exec, configDir, agentId);
+      const profiles = authData?.profiles || {};
+
+      const keys: any[] = [];
+      for (const [profileId, cred] of Object.entries(profiles) as [string, any][]) {
+        const provider = cred.provider || profileId.split(":")[0];
+        const rawKey = cred.key || cred.token || cred.access || "";
+        const masked = maskKey(rawKey);
+        const cached = db.prepare(
+          "SELECT status, checked_at, error_message, email, account_info FROM provider_keys WHERE instance_id = ? AND profile_id = ?"
+        ).get(id, profileId) as any;
+
+        keys.push({
+          profileId, provider,
+          type: cred.type || "api_key",
+          keyMasked: masked,
+          status: cred.type === "oauth"
+            ? (cred.expires && cred.expires < Date.now() ? "expired" : "valid")
+            : (cached?.status || "unknown"),
+          checkedAt: cached?.checked_at || null,
+          errorMessage: cached?.error_message || null,
+          email: cached?.email || cred.email || null,
+          accountInfo: cached?.account_info ? JSON.parse(cached.account_info) : null,
+          expiresAt: cred.expires || null,
+        });
+      }
+      return c.json({ keys });
+    } catch (err: any) {
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
+  app.post("/:id/keys/refresh", async (c) => {
+    const id = c.req.param("id");
+    if (!manager.get(id)) return c.json({ error: "instance not found" }, 404);
+    const profile = profileFromInstanceId(id);
+    const configDir = getConfigDir(profile);
+    const exec = getExecutor(id, hostStore);
+    try {
+      const config = await readRemoteConfig(exec, configDir);
+      const agentList: any[] = config?.agents?.list || [];
+      const agentId = agentList[0]?.id || "main";
+      const authData = await readAuthProfiles(exec, configDir, agentId);
+      const profiles = authData?.profiles || {};
+      const providerConfigs = config?.models?.providers || {};
+      const oneHourAgo = new Date(Date.now() - 3600_000).toISOString();
+
+      const staleKeys: { profileId: string; cred: any }[] = [];
+      for (const [profileId, cred] of Object.entries(profiles) as [string, any][]) {
+        if (cred.type === "oauth") continue;
+        const cached = db.prepare(
+          "SELECT checked_at FROM provider_keys WHERE instance_id = ? AND profile_id = ?"
+        ).get(id, profileId) as any;
+        if (!cached || !cached.checked_at || cached.checked_at < oneHourAgo) {
+          staleKeys.push({ profileId, cred });
+        }
+      }
+
+      const staleCount = staleKeys.length;
+      if (staleCount > 0) {
+        (async () => {
+          for (const { profileId, cred } of staleKeys) {
+            const provider = cred.provider || profileId.split(":")[0];
+            const rawKey = cred.key || cred.token || "";
+            const baseUrl = providerConfigs[provider]?.baseUrl || "";
+            try {
+              const result = await verifyProviderKey(exec, provider, rawKey, baseUrl);
+              db.prepare(`
+                INSERT INTO provider_keys (instance_id, profile_id, provider, key_masked, status, checked_at, error_message, email, account_info)
+                VALUES (?, ?, ?, ?, ?, datetime('now'), ?, ?, ?)
+                ON CONFLICT (instance_id, profile_id) DO UPDATE SET
+                  status = excluded.status, checked_at = excluded.checked_at,
+                  error_message = excluded.error_message, email = excluded.email,
+                  account_info = excluded.account_info
+              `).run(
+                id, profileId, provider, maskKey(rawKey),
+                result.status, result.error || null,
+                result.email || null,
+                result.accountInfo ? JSON.stringify(result.accountInfo) : null,
+              );
+            } catch { /* ignore individual failures */ }
+          }
+        })();
+      }
+      return c.json({ refreshing: staleCount });
+    } catch (err: any) {
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
+  app.post("/:id/keys/:profileId/verify", async (c) => {
+    const id = c.req.param("id");
+    const profileId = c.req.param("profileId");
+    if (!manager.get(id)) return c.json({ error: "instance not found" }, 404);
+    const profile = profileFromInstanceId(id);
+    const configDir = getConfigDir(profile);
+    const exec = getExecutor(id, hostStore);
+    try {
+      const config = await readRemoteConfig(exec, configDir);
+      const agentList: any[] = config?.agents?.list || [];
+      const agentId = agentList[0]?.id || "main";
+      const authData = await readAuthProfiles(exec, configDir, agentId);
+      const cred = authData?.profiles?.[profileId];
+      if (!cred) return c.json({ error: "Profile not found" }, 404);
+
+      const provider = cred.provider || profileId.split(":")[0];
+      const rawKey = cred.key || cred.token || "";
+      const providerConfigs = config?.models?.providers || {};
+      const baseUrl = providerConfigs[provider]?.baseUrl || "";
+
+      const result = await verifyProviderKey(exec, provider, rawKey, baseUrl);
+
+      db.prepare(`
+        INSERT INTO provider_keys (instance_id, profile_id, provider, key_masked, status, checked_at, error_message, email, account_info)
+        VALUES (?, ?, ?, ?, ?, datetime('now'), ?, ?, ?)
+        ON CONFLICT (instance_id, profile_id) DO UPDATE SET
+          status = excluded.status, checked_at = excluded.checked_at,
+          error_message = excluded.error_message, email = excluded.email,
+          account_info = excluded.account_info
+      `).run(
+        id, profileId, provider, maskKey(rawKey),
+        result.status, result.error || null,
+        result.email || null,
+        result.accountInfo ? JSON.stringify(result.accountInfo) : null,
+      );
+
+      return c.json({ profileId, status: result.status, email: result.email, error: result.error });
+    } catch (err: any) {
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
+  app.delete("/:id/keys/:profileId", async (c) => {
+    const id = c.req.param("id");
+    const profileId = c.req.param("profileId");
+    if (!manager.get(id)) return c.json({ error: "instance not found" }, 404);
+    const profile = profileFromInstanceId(id);
+    const configDir = getConfigDir(profile);
+    const exec = getExecutor(id, hostStore);
+    try {
+      const config = await readRemoteConfig(exec, configDir);
+      const agentList: any[] = config?.agents?.list || [];
+      const agentIds = agentList.map((a: any) => a.id);
+      if (agentIds.length === 0) agentIds.push("main");
+
+      for (const agentId of agentIds) {
+        await deleteAuthProfile(exec, configDir, agentId, profileId);
+      }
+
+      db.prepare("DELETE FROM provider_keys WHERE instance_id = ? AND profile_id = ?").run(id, profileId);
+
+      auditLog(db, c, "lifecycle.key.delete", `Deleted key profile: ${profileId}`, id);
+      return c.json({ ok: true });
+    } catch (err: any) {
       return c.json({ error: err.message }, 500);
     }
   });
