@@ -808,5 +808,36 @@
       "utility": "工具",
       "ai": "AI & 机器学习"
     }
+  },
+  "models": {
+    "keys": {
+      "valid": "有效",
+      "invalid": "已失效",
+      "unknown": "未知",
+      "addKey": "添加密钥",
+      "deleteKey": "删除",
+      "verify": "验证",
+      "noKeys": "未配置 API 密钥",
+      "lastChecked": "{{time}}前验证",
+      "verifying": "验证中...",
+      "deleteConfirm": "删除密钥 {{key}}？将从所有智能体中移除。",
+      "totalUsage": "总用量: {{tokens}} tok  {{cost}}",
+      "invalidError": "错误: {{error}}",
+      "addProvider": "添加提供商",
+      "providerName": "提供商",
+      "baseUrl": "Base URL",
+      "apiKey": "API Key",
+      "networkUnreachable": "无法连接",
+      "duplicateKey": "该密钥已存在",
+      "sshError": "SSH 连接失败",
+      "partialSuccess": "部分保存 ({{success}}/{{total}} 个智能体)",
+      "refreshing": "刷新中...",
+      "oauthManaged": "由 OAuth 管理",
+      "noBaseUrl": "无 Base URL",
+      "keyPlaceholder": "sk-...",
+      "addKeyTitle": "为 {{provider}} 添加 API Key",
+      "expired": "已过期",
+      "expiresIn": "{{time}}后过期"
+    }
   }
 }

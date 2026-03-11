@@ -808,5 +808,36 @@
       "utility": "Utility",
       "ai": "AI & ML"
     }
+  },
+  "models": {
+    "keys": {
+      "valid": "Valid",
+      "invalid": "Invalid",
+      "unknown": "Unknown",
+      "addKey": "Add Key",
+      "deleteKey": "Delete",
+      "verify": "Verify",
+      "noKeys": "No API keys configured",
+      "lastChecked": "{{time}} ago",
+      "verifying": "Verifying...",
+      "deleteConfirm": "Delete key {{key}}? This will remove it from all agents.",
+      "totalUsage": "Total: {{tokens}} tok  {{cost}}",
+      "invalidError": "Error: {{error}}",
+      "addProvider": "Add Provider",
+      "providerName": "Provider",
+      "baseUrl": "Base URL",
+      "apiKey": "API Key",
+      "networkUnreachable": "Cannot connect",
+      "duplicateKey": "This key already exists",
+      "sshError": "SSH connection failed",
+      "partialSuccess": "Partially saved ({{success}}/{{total}} agents)",
+      "refreshing": "Refreshing...",
+      "oauthManaged": "Managed by OAuth",
+      "noBaseUrl": "No base URL",
+      "keyPlaceholder": "sk-...",
+      "addKeyTitle": "Add API Key for {{provider}}",
+      "expired": "Expired",
+      "expiresIn": "Expires in {{time}}"
+    }
   }
 }
