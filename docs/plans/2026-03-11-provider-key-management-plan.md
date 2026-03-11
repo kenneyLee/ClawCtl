@@ -563,11 +563,14 @@ Add after the PUT `/:id/providers` endpoint (after line 480 in lifecycle.ts):
           provider,
           type: cred.type || "api_key",
           keyMasked: masked,
-          status: cached?.status || "unknown",
+          status: cred.type === "oauth"
+            ? (cred.expires && cred.expires < Date.now() ? "expired" : "valid")
+            : (cached?.status || "unknown"),
           checkedAt: cached?.checked_at || null,
           errorMessage: cached?.error_message || null,
-          email: cached?.email || null,
+          email: cached?.email || cred.email || null,
           accountInfo: cached?.account_info ? JSON.parse(cached.account_info) : null,
+          expiresAt: cred.expires || null,
         });
       }
 
@@ -942,7 +945,9 @@ First check if a `"models"` key already exists in `en.json`. If it does, merge t
     "oauthManaged": "Managed by OAuth",
     "noBaseUrl": "No base URL",
     "keyPlaceholder": "sk-...",
-    "addKeyTitle": "Add API Key for {{provider}}"
+    "addKeyTitle": "Add API Key for {{provider}}",
+    "expired": "Expired",
+    "expiresIn": "Expires in {{time}}"
   }
 }
 ```
@@ -978,7 +983,9 @@ Add the same structure in `zh.json`:
     "oauthManaged": "由 OAuth 管理",
     "noBaseUrl": "无 Base URL",
     "keyPlaceholder": "sk-...",
-    "addKeyTitle": "为 {{provider}} 添加 API Key"
+    "addKeyTitle": "为 {{provider}} 添加 API Key",
+    "expired": "已过期",
+    "expiresIn": "{{time}}后过期"
   }
 }
 ```
@@ -1168,6 +1175,17 @@ The JSX for each provider card:
               title={t("models.keys.verify")}>
               <RefreshCw size={14} className={verifyingKey === k.profileId ? "animate-spin" : ""} />
             </button>
+            {k.type === "oauth" && k.expiresAt && (
+              <span className={`text-xs px-2 py-0.5 rounded whitespace-nowrap ${
+                k.expiresAt < Date.now() ? "bg-red-500/10 text-red-500" :
+                k.expiresAt < Date.now() + 86400_000 ? "bg-amber-500/10 text-amber-500" :
+                "bg-ok/10 text-ok"
+              }`}>
+                {k.expiresAt < Date.now()
+                  ? t("models.keys.expired")
+                  : t("models.keys.expiresIn", { time: formatTimeUntil(k.expiresAt) })}
+              </span>
+            )}
             {k.type !== "oauth" && (
               <button
                 onClick={() => handleDeleteKey(k.profileId, k.keyMasked)}
@@ -1224,6 +1242,15 @@ function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`;
   return String(n);
+}
+
+function formatTimeUntil(epochMs: number): string {
+  const diff = epochMs - Date.now();
+  if (diff <= 0) return "0m";
+  const hours = Math.floor(diff / 3600_000);
+  if (hours < 1) return `${Math.floor(diff / 60_000)}m`;
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
 }
 
 function formatTimeAgo(isoDate: string, t: (k: string, o?: any) => string): string {

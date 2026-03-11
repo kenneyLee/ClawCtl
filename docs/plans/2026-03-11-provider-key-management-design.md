@@ -163,7 +163,14 @@ Status colors: green `有效`, red `已失效` (with error), gray `未知`.
 
 ### OAuth credentials (e.g., openai-codex)
 
-Display-only: show status + email + expiry. No add/delete key buttons. Refresh/re-auth handled by OpenClaw's OAuth flow.
+Display-only with expiry detection:
+- Read `expires` field from auth-profiles.json (epoch ms)
+- If `expires < Date.now()` → red badge "已过期", prompt user to re-auth
+- If expires within 24h → amber badge "即将过期"
+- Otherwise → green badge "有效" with expiry countdown ("3天后过期")
+- Show email if available
+- No add/delete key buttons — managed by OpenClaw's OAuth flow
+- Re-auth button links to existing OAuth flow (`/settings/oauth/openai/*`)
 
 ## Edge Cases
 
