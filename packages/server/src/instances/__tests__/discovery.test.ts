@@ -95,7 +95,7 @@ describe("discoverLocalInstances", () => {
   it("extracts gateway token from config", () => {
     mockReaddirSync.mockReturnValue([".openclaw"] as any);
     mockExistsSync.mockReturnValue(true);
-    mockReadFileSync.mockReturnValue(JSON.stringify({ gateway: { port: 18789, token: "secret" } }));
+    mockReadFileSync.mockReturnValue(JSON.stringify({ gateway: { port: 18789, auth: { token: "secret" } } }));
 
     const result = discoverLocalInstances();
     expect(result[0].token).toBe("secret");

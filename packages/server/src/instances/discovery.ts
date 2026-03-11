@@ -22,7 +22,7 @@ export function discoverLocalInstances(): GatewayConnection[] {
         results.push({
           id: `local-${profileName}`,
           url: `ws://127.0.0.1:${port}`,
-          token: config?.gateway?.token,
+          token: config?.gateway?.auth?.token,
           label: profileName,
           status: "disconnected",
         });

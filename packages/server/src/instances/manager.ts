@@ -27,26 +27,34 @@ export class InstanceManager extends EventEmitter {
       }
     }
 
-    // Also discover local instances
+    // Also discover local instances (always update to pick up fresh tokens)
     const local = discoverLocalInstances();
     for (const conn of local) {
-      if (!this.clients.has(conn.id)) {
-        this.persistInstance(conn);
-        this.connectInstance(conn);
-      }
+      this.addInstance(conn);
     }
   }
 
   addInstance(conn: GatewayConnection): void {
-    if (this.clients.has(conn.id)) return;
     this.persistInstance(conn);
+    const existing = this.clients.get(conn.id);
+    if (existing) {
+      // Update token/url on existing connection and reconnect if changed
+      const changed = existing.conn.token !== conn.token || existing.conn.url !== conn.url;
+      if (changed) {
+        existing.conn.token = conn.token;
+        existing.conn.url = conn.url;
+        if (conn.label) existing.conn.label = conn.label;
+        this.doConnect(conn.id);
+      }
+      return;
+    }
     this.connectInstance(conn);
   }
 
   private persistInstance(conn: GatewayConnection) {
     if (!this.db) return;
     this.db.prepare(
-      "INSERT OR IGNORE INTO instances (id, url, token, label) VALUES (?, ?, ?, ?)"
+      "INSERT INTO instances (id, url, token, label) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET url=excluded.url, token=excluded.token, label=excluded.label"
     ).run(conn.id, conn.url, conn.token || null, conn.label || null);
   }
 
