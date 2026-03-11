@@ -124,6 +124,46 @@ export const handlers = [
     })
   ),
   http.post("/api/skills/install", () => HttpResponse.json({ ok: true })),
+
+  // Lifecycle / LLM providers
+  http.get("/api/lifecycle/:id/providers", () =>
+    HttpResponse.json({
+      providers: {
+        openai: { baseUrl: "https://api.openai.com/v1", models: [] },
+        anthropic: { baseUrl: "https://api.anthropic.com/v1", models: [] },
+      },
+      detectedProviders: [],
+    })
+  ),
+  http.put("/api/lifecycle/:id/providers", () =>
+    HttpResponse.json({ ok: true })
+  ),
+  http.get("/api/lifecycle/:id/quota", () =>
+    HttpResponse.json({ quotas: [] })
+  ),
+  http.get("/api/lifecycle/:id/cost-estimate", () =>
+    HttpResponse.json({ totalCost: 0, byModel: {}, matched: 0, unmatched: 0 })
+  ),
+
+  // Key management handlers
+  http.get("/api/lifecycle/:id/keys", () =>
+    HttpResponse.json({
+      keys: [
+        { profileId: "openai:default", provider: "openai", type: "api_key", keyMasked: "sk-t...1234", status: "valid", checkedAt: new Date(Date.now() - 120_000).toISOString(), errorMessage: null, email: "kris@example.com", expiresAt: null },
+        { profileId: "openai:key2", provider: "openai", type: "api_key", keyMasked: "sk-n...5678", status: "invalid", checkedAt: new Date(Date.now() - 3600_000).toISOString(), errorMessage: "HTTP 401: unauthorized", email: null, expiresAt: null },
+        { profileId: "anthropic:default", provider: "anthropic", type: "api_key", keyMasked: "sk-a...abcd", status: "valid", checkedAt: new Date(Date.now() - 300_000).toISOString(), errorMessage: null, email: "team@company.com", expiresAt: null },
+      ],
+    })
+  ),
+  http.post("/api/lifecycle/:id/keys/refresh", () =>
+    HttpResponse.json({ refreshing: 0 })
+  ),
+  http.post("/api/lifecycle/:id/keys/:profileId/verify", () =>
+    HttpResponse.json({ profileId: "openai:default", status: "valid", email: "kris@example.com" })
+  ),
+  http.delete("/api/lifecycle/:id/keys/:profileId", () =>
+    HttpResponse.json({ ok: true })
+  ),
 ];
 
 export const server = setupServer(...handlers);
