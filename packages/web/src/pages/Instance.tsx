@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams, Link, useSearchParams } from "react-router-dom";
-import { ChevronLeft, ChevronUp, ChevronDown, RefreshCw, ArrowUpDown, Play, Square, RotateCcw, Save, Terminal, Camera, GitCompare, Trash2, Users, Plus, Radio, LogOut, Search, Stethoscope, ShieldAlert } from "lucide-react";
+import { ChevronLeft, ChevronUp, ChevronDown, RefreshCw, ArrowUpDown, Play, Square, RotateCcw, Save, Terminal, Camera, GitCompare, Trash2, Users, Plus, Radio, LogOut, Search, Stethoscope, ShieldAlert, Share2 } from "lucide-react";
 import { useInstances, type InstanceInfo } from "../hooks/useInstances";
 import { api, get, post, put } from "../lib/api";
 import { del } from "../lib/api";
@@ -783,6 +783,7 @@ function LlmTab({ inst }: { inst: InstanceInfo }) {
   const [hasOAuthToken, setHasOAuthToken] = useState(false);
   const [oauthExpiry, setOauthExpiry] = useState<number | null>(null);
   const [syncStatus, setSyncStatus] = useState<"idle" | "loading" | "selecting" | "syncing" | "done">("idle");
+  const [syncProvider, setSyncProvider] = useState<string | null>(null);
   const [syncTargets, setSyncTargets] = useState<{ id: string; label: string; checked: boolean }[]>([]);
   const [syncResult, setSyncResult] = useState<{ synced: string[]; errors?: { id: string; error: string }[] } | null>(null);
   // Quota & cost state
@@ -909,6 +910,55 @@ function LlmTab({ inst }: { inst: InstanceInfo }) {
       await fetchKeys();
       if (res.restartRequired) setShowRestartPrompt(true);
     } catch { /* ignore */ }
+  };
+
+  const handleStartSync = async (providerName: string) => {
+    setSyncProvider(providerName);
+    setSyncStatus("loading");
+    setSyncResult(null);
+    try {
+      const all = await get<InstanceInfo[]>("/instances");
+      const hostKey = inst.id.startsWith("local-") ? "local" : inst.id.replace(/-[^-]+$/, "");
+      const siblings = all.filter((i) => {
+        const hk = i.id.startsWith("local-") ? "local" : i.id.replace(/-[^-]+$/, "");
+        return i.id !== inst.id && (hk === hostKey || true);
+      });
+      if (siblings.length === 0) {
+        setSyncStatus("idle");
+        setSyncProvider(null);
+        return;
+      }
+      setSyncTargets(siblings.map((i) => {
+        const hk = i.id.startsWith("local-") ? "local" : i.id.replace(/-[^-]+$/, "");
+        const sameHost = hk === hostKey;
+        return { id: i.id, label: `${i.connection.label || i.id}${sameHost ? "" : " (" + t("instance.llm.syncOtherHost") + ")"}`, checked: sameHost };
+      }));
+      setSyncStatus("selecting");
+    } catch {
+      setSyncStatus("idle");
+      setSyncProvider(null);
+    }
+  };
+
+  const handleConfirmSync = async () => {
+    const selected = syncTargets.filter((tg) => tg.checked).map((tg) => tg.id);
+    if (!selected.length) return;
+    setSyncStatus("syncing");
+    // Get profileIds for the syncing provider
+    const profileIds = syncProvider
+      ? keys.filter(k => k.provider === syncProvider || k.profileId.startsWith(syncProvider + ":") || k.profileId.startsWith(syncProvider + "-")).map(k => k.profileId)
+      : undefined;
+    try {
+      const r = await post<{ ok: boolean; synced: string[]; errors?: { id: string; error: string }[] }>(
+        `/lifecycle/${inst.id}/providers/oauth/sync`,
+        { targets: selected, profileIds },
+      );
+      setSyncResult(r);
+      setSyncStatus("done");
+    } catch (e: any) {
+      setSyncResult({ synced: [], errors: [{ id: "*", error: e.message }] });
+      setSyncStatus("done");
+    }
   };
 
   const handleAddKey = async (providerName: string) => {
@@ -1289,12 +1339,74 @@ function LlmTab({ inst }: { inst: InstanceInfo }) {
                         {addKeyError && <span className="text-xs text-red-500">{addKeyError}</span>}
                       </div>
                     ) : (
-                      <button onClick={() => setAddKeyProvider(name)}
-                        className="text-xs text-cyan hover:text-cyan/80">
-                        + {t("models.keys.addKey")}
-                      </button>
+                      <div className="flex items-center gap-4">
+                        <button onClick={() => setAddKeyProvider(name)}
+                          className="text-xs text-cyan hover:text-cyan/80">
+                          + {t("models.keys.addKey")}
+                        </button>
+                        {provKeys.length > 0 && (
+                          <button
+                            onClick={() => handleStartSync(name)}
+                            disabled={syncStatus !== "idle" && syncProvider !== name}
+                            className="flex items-center gap-1 text-xs text-ink-3 hover:text-brand transition-colors disabled:opacity-30"
+                          >
+                            <Share2 size={12} />
+                            {t("instance.llm.syncToOthers")}
+                          </button>
+                        )}
+                      </div>
                     )}
                   </div>
+
+                  {/* Sync UI for this provider */}
+                  {syncProvider === name && syncStatus === "loading" && (
+                    <div className="px-4 py-2.5 border-t border-edge">
+                      <p className="text-xs text-ink-2 animate-pulse">{t("instance.llm.syncLoading")}</p>
+                    </div>
+                  )}
+                  {syncProvider === name && syncStatus === "selecting" && (
+                    <div className="px-4 py-2.5 border-t border-edge space-y-2">
+                      <p className="text-xs text-ink-2 font-medium">{t("instance.llm.syncSelectTargets")}</p>
+                      {syncTargets.map((tgt, idx) => (
+                        <label key={tgt.id} className="flex items-center gap-2 text-xs text-ink cursor-pointer">
+                          <input type="checkbox" checked={tgt.checked}
+                            onChange={(e) => { const next = [...syncTargets]; next[idx] = { ...tgt, checked: e.target.checked }; setSyncTargets(next); }}
+                            className="rounded border-edge" />
+                          {tgt.label}
+                        </label>
+                      ))}
+                      <div className="flex gap-2 pt-1">
+                        <button onClick={handleConfirmSync}
+                          disabled={!syncTargets.some((tg) => tg.checked)}
+                          className="flex-1 px-3 py-1.5 bg-brand hover:bg-brand-light rounded-lg text-xs font-medium disabled:opacity-50 transition-colors">
+                          {t("instance.llm.syncConfirm", { count: syncTargets.filter((tg) => tg.checked).length })}
+                        </button>
+                        <button onClick={() => { setSyncStatus("idle"); setSyncProvider(null); setSyncTargets([]); }}
+                          className="px-3 py-1.5 bg-s1 border border-edge rounded-lg text-xs text-ink-2 hover:text-ink transition-colors">
+                          {t("common.cancel")}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {syncProvider === name && syncStatus === "syncing" && (
+                    <div className="px-4 py-2.5 border-t border-edge">
+                      <p className="text-xs text-ink-2 animate-pulse">{t("instance.llm.syncSyncing")}</p>
+                    </div>
+                  )}
+                  {syncProvider === name && syncStatus === "done" && syncResult && (
+                    <div className="px-4 py-2.5 border-t border-edge space-y-1">
+                      {syncResult.synced.length > 0 && (
+                        <p className="text-xs text-ok">{t("instance.llm.syncSuccess", { count: syncResult.synced.length })}</p>
+                      )}
+                      {syncResult.errors?.map((e) => (
+                        <p key={e.id} className="text-xs text-danger">{e.id}: {e.error}</p>
+                      ))}
+                      <button onClick={() => { setSyncStatus("idle"); setSyncProvider(null); setSyncResult(null); }}
+                        className="text-xs text-ink-3 hover:text-ink underline underline-offset-2">
+                        {t("common.dismiss")}
+                      </button>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -1530,115 +1642,6 @@ function LlmTab({ inst }: { inst: InstanceInfo }) {
                 )}
 
                 {oauthError && <p className="text-sm text-danger">{oauthError}</p>}
-
-                {/* Sync OAuth token to other instances */}
-                {hasOAuthToken && syncStatus === "idle" && (
-                  <button
-                    onClick={async () => {
-                      setSyncStatus("loading");
-                      setSyncResult(null);
-                      try {
-                        const all = await get<InstanceInfo[]>("/instances");
-                        const hostKey = inst.id.startsWith("local-") ? "local" : inst.id.replace(/-[^-]+$/, "");
-                        const siblings = all.filter((i) => {
-                          const hk = i.id.startsWith("local-") ? "local" : i.id.replace(/-[^-]+$/, "");
-                          return i.id !== inst.id && (hk === hostKey || true);
-                        });
-                        if (siblings.length === 0) {
-                          setSyncStatus("idle");
-                          return;
-                        }
-                        setSyncTargets(siblings.map((i) => {
-                          const hk = i.id.startsWith("local-") ? "local" : i.id.replace(/-[^-]+$/, "");
-                          const sameHost = hk === hostKey;
-                          return { id: i.id, label: `${i.connection.label || i.id}${sameHost ? "" : " (" + t("instance.llm.syncOtherHost") + ")"}`, checked: sameHost };
-                        }));
-                        setSyncStatus("selecting");
-                      } catch {
-                        setSyncStatus("idle");
-                      }
-                    }}
-                    className="w-full px-3 py-1.5 bg-s1 border border-edge hover:border-brand rounded-lg text-xs text-ink-2 hover:text-ink transition-colors"
-                  >
-                    {t("instance.llm.syncToOthers")}
-                  </button>
-                )}
-
-                {syncStatus === "loading" && (
-                  <p className="text-xs text-ink-2 animate-pulse">{t("instance.llm.syncLoading")}</p>
-                )}
-
-                {syncStatus === "selecting" && (
-                  <div className="space-y-2 p-2.5 bg-s2 border border-edge rounded-lg">
-                    <p className="text-xs text-ink-2 font-medium">{t("instance.llm.syncSelectTargets")}</p>
-                    {syncTargets.map((tgt, idx) => (
-                      <label key={tgt.id} className="flex items-center gap-2 text-xs text-ink cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={tgt.checked}
-                          onChange={(e) => {
-                            const next = [...syncTargets];
-                            next[idx] = { ...tgt, checked: e.target.checked };
-                            setSyncTargets(next);
-                          }}
-                          className="rounded border-edge"
-                        />
-                        {tgt.label}
-                      </label>
-                    ))}
-                    <div className="flex gap-2 pt-1">
-                      <button
-                        onClick={async () => {
-                          const selected = syncTargets.filter((tg) => tg.checked).map((tg) => tg.id);
-                          if (selected.length === 0) return;
-                          setSyncStatus("syncing");
-                          try {
-                            const r = await post<{ ok: boolean; synced: string[]; errors?: { id: string; error: string }[] }>(
-                              `/lifecycle/${inst.id}/providers/oauth/sync`,
-                              { targets: selected },
-                            );
-                            setSyncResult(r);
-                            setSyncStatus("done");
-                          } catch (e: any) {
-                            setSyncResult({ synced: [], errors: [{ id: "*", error: e.message }] });
-                            setSyncStatus("done");
-                          }
-                        }}
-                        disabled={!syncTargets.some((tg) => tg.checked)}
-                        className="flex-1 px-3 py-1.5 bg-brand hover:bg-brand-light rounded-lg text-xs font-medium disabled:opacity-50 transition-colors"
-                      >
-                        {t("instance.llm.syncConfirm", { count: syncTargets.filter((tg) => tg.checked).length })}
-                      </button>
-                      <button
-                        onClick={() => { setSyncStatus("idle"); setSyncTargets([]); }}
-                        className="px-3 py-1.5 bg-s1 border border-edge rounded-lg text-xs text-ink-2 hover:text-ink transition-colors"
-                      >
-                        {t("common.cancel")}
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {syncStatus === "syncing" && (
-                  <p className="text-xs text-ink-2 animate-pulse">{t("instance.llm.syncSyncing")}</p>
-                )}
-
-                {syncStatus === "done" && syncResult && (
-                  <div className="space-y-1">
-                    {syncResult.synced.length > 0 && (
-                      <p className="text-xs text-ok">{t("instance.llm.syncSuccess", { count: syncResult.synced.length })}</p>
-                    )}
-                    {syncResult.errors?.map((e) => (
-                      <p key={e.id} className="text-xs text-danger">{e.id}: {e.error}</p>
-                    ))}
-                    <button
-                      onClick={() => { setSyncStatus("idle"); setSyncResult(null); }}
-                      className="text-xs text-ink-3 hover:text-ink underline underline-offset-2"
-                    >
-                      {t("common.dismiss")}
-                    </button>
-                  </div>
-                )}
 
                 <p className="text-[10px] text-ink-3">
                   {t("instance.llm.oauthNote")}
