@@ -7,7 +7,8 @@ import { requireWrite } from "../auth/middleware.js";
 import { auditLog } from "../audit.js";
 import { getExecutor, getHostExecutor } from "../executor/factory.js";
 import { getProcessStatus, stopProcess, startProcess, restartProcess } from "../lifecycle/service.js";
-import { checkNodeVersion, getVersions, streamInstall, streamUninstall, streamChannelCreate } from "../lifecycle/install.js";
+import { checkNodeVersion, getVersions, streamInstall, streamUninstall, streamChannelCreate, streamCreateInstance } from "../lifecycle/install.js";
+import type { InstallStep } from "../lifecycle/install.js";
 import { readRemoteConfig, writeRemoteConfig, readAuthProfiles, writeAuthProfiles, deleteAuthProfile, getConfigDir, profileFromInstanceId } from "../lifecycle/config.js";
 import { verifyProviderKey, maskKey } from "../lifecycle/verify.js";
 import { SnapshotStore } from "../lifecycle/snapshot.js";
@@ -1099,6 +1100,34 @@ export function lifecycleRoutes(hostStore: HostStore, manager: InstanceManager, 
         await emit({ step: "Connection error", status: "error", detail });
       }
       auditLog(db, c, "lifecycle.uninstall", `${success ? "Uninstalled" : "Uninstall failed"} openclaw`, String(hostId));
+      await s.write(`data: ${JSON.stringify({ done: true, success })}\n\n`);
+    });
+  });
+
+  // --- Create new OpenClaw instance on a host ---
+
+  app.post("/host/:hostId/create-instance", async (c) => {
+    const hostId = c.req.param("hostId") === "local" ? "local" as const : parseInt(c.req.param("hostId"));
+    const { profile, port, copyFrom } = await c.req.json();
+
+    if (!profile || !port) return c.json({ error: "profile and port required" }, 400);
+
+    const exec = getHostExecutor(hostId, hostStore);
+
+    c.header("Content-Type", "text/event-stream");
+    c.header("Cache-Control", "no-cache");
+
+    return stream(c, async (s) => {
+      const emit = async (step: InstallStep) => {
+        await s.write(`data: ${JSON.stringify(step)}\n\n`);
+      };
+      let success = false;
+      try {
+        success = await streamCreateInstance(exec, emit, { profile, port, copyFrom });
+      } catch (err: any) {
+        await emit({ step: "Error", status: "error", detail: err.message?.slice(0, 300) || "Unknown error" });
+      }
+      auditLog(db, c, "lifecycle.create-instance", `${success ? "Created" : "Failed"} instance ${profile} on host ${hostId}`, `host-${hostId}`);
       await s.write(`data: ${JSON.stringify({ done: true, success })}\n\n`);
     });
   });

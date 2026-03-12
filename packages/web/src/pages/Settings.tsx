@@ -207,6 +207,14 @@ export function Settings() {
   const [confirmDeleteUser, setConfirmDeleteUser] = useState<UserInfo | null>(null);
   // Track which hosts have instances (instance IDs start with "ssh-{hostId}-")
   const [instanceHostIds, setInstanceHostIds] = useState<Set<number>>(new Set());
+  // Create instance
+  const [showCreateInstance, setShowCreateInstance] = useState<number | null>(null); // hostId
+  const [newProfile, setNewProfile] = useState("");
+  const [newPort, setNewPort] = useState("18790");
+  const [copyFromProfile, setCopyFromProfile] = useState("");
+  const [createInstanceStep, setCreateInstanceStep] = useState<string | null>(null);
+  const [createInstanceError, setCreateInstanceError] = useState(false);
+  const [createInstanceMsg, setCreateInstanceMsg] = useState<string | null>(null);
 
   // Digest
   const [digestType, setDigestType] = useState<"daily" | "weekly">("daily");
@@ -413,6 +421,75 @@ export function Settings() {
     } catch { setInstallMsg(`${h.label}: Uninstall failed (stream error)`); }
     setInstallStep(null);
     setInstalling(null);
+  };
+
+  const runCreateInstance = async (hostId: number) => {
+    setCreateInstanceStep(null);
+    setCreateInstanceError(false);
+    setCreateInstanceMsg(null);
+    try {
+      const res = await fetch(`/api/lifecycle/host/${hostId}/create-instance`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          profile: newProfile,
+          port: parseInt(newPort),
+          copyFrom: copyFromProfile || undefined,
+        }),
+      });
+      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() || "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const ev = JSON.parse(line.slice(6));
+            if (ev.done) {
+              if (ev.success) {
+                setCreateInstanceMsg(t("settings.createInstanceSuccess", { profile: newProfile }));
+                setShowCreateInstance(null);
+                setCreateInstanceStep(null);
+                setNewProfile("");
+                setNewPort("18790");
+                setCopyFromProfile("");
+                // Trigger rescan
+                try {
+                  await post(`/hosts/${hostId}/scan`, {});
+                  get("/hosts").then(setHosts);
+                  get<Array<{ id: string }>>("/instances").then((insts) => {
+                    const ids = new Set<number>();
+                    for (const inst of insts) {
+                      const m = inst.id.match(/^ssh-(\d+)-/);
+                      if (m) ids.add(parseInt(m[1]));
+                    }
+                    setInstanceHostIds(ids);
+                  }).catch(() => {});
+                } catch {}
+              } else {
+                setCreateInstanceError(true);
+                setCreateInstanceStep(`${ev.detail || "Failed"}`);
+              }
+            } else if (ev.status === "error") {
+              setCreateInstanceStep(`${ev.step}: ${ev.detail || "Failed"}`);
+              setCreateInstanceError(true);
+            } else if (ev.status === "running") {
+              setCreateInstanceStep(ev.detail ? `${ev.step} — ${ev.detail}` : ev.step);
+            }
+          } catch { /* skip malformed */ }
+        }
+      }
+    } catch (e: any) {
+      setCreateInstanceMsg(`Error: ${e.message}`);
+      setCreateInstanceError(true);
+    }
   };
 
   const deleteUser = async (id: number) => {
@@ -797,6 +874,7 @@ export function Settings() {
 
           {scanMsg && <p className={`text-sm mb-3 ${scanMsg.includes("Error") || scanMsg.includes("No OpenClaw") ? "text-warn" : "text-ok"}`}>{scanMsg}</p>}
           {installMsg && <p className={`text-sm mb-3 ${installError ? "text-danger" : "text-ok"}`}>{installMsg}</p>}
+          {createInstanceMsg && <p className={`text-sm mb-3 ${createInstanceError ? "text-danger" : "text-ok"}`}>{createInstanceMsg}</p>}
 
           {hosts.length === 0 && !showAddHost && (
             <p className="text-sm text-ink-3">{t("settings.noHostsConfigured")}</p>
@@ -863,6 +941,15 @@ export function Settings() {
                       >
                         {scanning === h.id ? "..." : t("settings.scan")}
                       </button>
+                      {hasInstances && (
+                        <button
+                          onClick={() => { setShowCreateInstance(h.id); setCreateInstanceMsg(null); setCreateInstanceStep(null); setCreateInstanceError(false); }}
+                          disabled={scanning !== null || installing !== null}
+                          className="px-3 py-1 text-sm rounded bg-ok/15 text-ok hover:bg-ok/25 disabled:opacity-40"
+                        >
+                          {t("settings.newInstance")}
+                        </button>
+                      )}
                       {!hasInstances && (
                         <button
                           onClick={() => runHostInstall(h)}
@@ -1102,6 +1189,67 @@ export function Settings() {
           }}
           onCancel={() => setConfirmUninstallHost(null)}
         />
+      )}
+      {showCreateInstance !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-s2 rounded-lg border border-edge p-6 w-full max-w-md shadow-xl">
+            <h3 className="text-lg font-semibold mb-4">{t("settings.createInstanceTitle")}</h3>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm text-ink-3 mb-1">{t("settings.profileName")}</label>
+                <input
+                  type="text"
+                  value={newProfile}
+                  onChange={(e) => setNewProfile(e.target.value.replace(/[^a-zA-Z0-9-]/g, ""))}
+                  placeholder="e.g. bot2"
+                  className="w-full bg-s3 border border-edge rounded px-3 py-2 text-sm text-ink"
+                  disabled={!!createInstanceStep && !createInstanceError}
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-ink-3 mb-1">{t("settings.gatewayPort")}</label>
+                <input
+                  type="number"
+                  value={newPort}
+                  onChange={(e) => setNewPort(e.target.value)}
+                  className="w-full bg-s3 border border-edge rounded px-3 py-2 text-sm text-ink"
+                  disabled={!!createInstanceStep && !createInstanceError}
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-ink-3 mb-1">{t("settings.copyConfigFrom")}</label>
+                <select
+                  value={copyFromProfile}
+                  onChange={(e) => setCopyFromProfile(e.target.value)}
+                  className="w-full bg-s3 border border-edge rounded px-3 py-2 text-sm text-ink"
+                  disabled={!!createInstanceStep && !createInstanceError}
+                >
+                  <option value="">{t("settings.freshConfig")}</option>
+                  <option value="default">default</option>
+                </select>
+              </div>
+              {createInstanceStep && (
+                <div className={`flex items-center gap-2 px-3 py-2 rounded border ${createInstanceError ? "bg-danger/10 border-danger/20 text-danger" : "bg-brand/10 border-brand/20 text-brand"}`}>
+                  {!createInstanceError && (
+                    <svg className="animate-spin h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                  )}
+                  <span className="text-sm">{createInstanceStep}</span>
+                </div>
+              )}
+            </div>
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                onClick={() => { setShowCreateInstance(null); setCreateInstanceStep(null); setCreateInstanceError(false); }}
+                className="px-4 py-2 text-sm rounded text-ink-3 hover:text-ink hover:bg-s3"
+              >{t("common.cancel")}</button>
+              <button
+                onClick={() => runCreateInstance(showCreateInstance)}
+                disabled={!newProfile || !newPort || (!!createInstanceStep && !createInstanceError)}
+                className="px-4 py-2 text-sm rounded bg-brand text-white hover:bg-brand/80 disabled:opacity-40"
+              >{t("settings.createInstance")}</button>
+            </div>
+          </div>
+        </div>
       )}
       {confirmDeleteHost && (
         <ConfirmDialog

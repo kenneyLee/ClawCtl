@@ -1,6 +1,7 @@
+import crypto from "crypto";
 import type { CommandExecutor } from "../executor/types.js";
 import { createChannelConfig, CHANNEL_DEFS, type CreateChannelInput } from "./channel-config.js";
-import { readRemoteConfig, writeRemoteConfig } from "./config.js";
+import { getConfigDir, readRemoteConfig, writeRemoteConfig } from "./config.js";
 
 const MIN_NODE_MAJOR = 22;
 
@@ -378,6 +379,181 @@ export async function streamInstall(
     } else {
       await emit({ step: "Start gateway", status: "error", detail: startR.stdout.slice(0, 200) });
     }
+  }
+
+  return true;
+}
+
+// --- Create new OpenClaw instance ---
+
+export async function streamCreateInstance(
+  exec: CommandExecutor,
+  emit: EmitFn,
+  options: {
+    profile: string;
+    port: number;
+    copyFrom?: string;
+  },
+): Promise<boolean> {
+  const { profile, port, copyFrom } = options;
+  const configDir = getConfigDir(profile);
+
+  // Resolve $HOME to absolute path for use in JSON config values
+  const homeR = await exec.exec("echo $HOME");
+  const resolvedConfigDir = configDir.replace("$HOME", homeR.stdout.trim());
+
+  // Step 1: Validate profile name
+  await emit({ step: "Validate profile", status: "running" });
+  if (!/^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?$/.test(profile)) {
+    await emit({ step: "Validate profile", status: "error", detail: "Profile name must be alphanumeric with hyphens only (no spaces, no leading/trailing hyphen)" });
+    return false;
+  }
+  const existsR = await exec.exec(`test -d ${configDir} && echo exists`);
+  if (existsR.stdout.trim() === "exists") {
+    await emit({ step: "Validate profile", status: "error", detail: `Directory ${configDir} already exists` });
+    return false;
+  }
+  await emit({ step: "Validate profile", status: "done", detail: profile });
+
+  // Step 2: Check port availability
+  await emit({ step: "Check port", status: "running" });
+  const portCheck = await exec.exec(`ss -tlnp 2>/dev/null | grep ':${port} ' || true`);
+  if (portCheck.stdout.trim()) {
+    await emit({ step: "Check port", status: "error", detail: `Port ${port} is already in use` });
+    return false;
+  }
+  await emit({ step: "Check port", status: "done", detail: `Port ${port} is available` });
+
+  // Step 3: Create config directory structure
+  await emit({ step: "Create directories", status: "running" });
+  const mkdirR = await exec.exec(`mkdir -p ${configDir}/agents/main/agent ${configDir}/workspace ${configDir}/logs`);
+  if (mkdirR.exitCode !== 0) {
+    await emit({ step: "Create directories", status: "error", detail: (mkdirR.stderr || mkdirR.stdout).slice(0, 200) });
+    return false;
+  }
+  await emit({ step: "Create directories", status: "done" });
+
+  // Step 4: Generate config
+  await emit({ step: "Generate config", status: "running" });
+  const token = crypto.randomBytes(24).toString("hex");
+
+  if (copyFrom) {
+    // Copy config from source instance
+    const sourceDir = getConfigDir(copyFrom);
+    const sourceExistsR = await exec.exec(`test -f ${sourceDir}/openclaw.json && echo exists`);
+    if (sourceExistsR.stdout.trim() !== "exists") {
+      await emit({ step: "Generate config", status: "error", detail: `Source instance "${copyFrom}" config not found at ${sourceDir}/openclaw.json` });
+      // Cleanup created dirs
+      await exec.exec(`rm -rf ${configDir}`);
+      return false;
+    }
+
+    try {
+      const sourceConfig = await readRemoteConfig(exec, sourceDir);
+      // Update port, token, and workspace path
+      if (sourceConfig.gateway) {
+        sourceConfig.gateway.port = port;
+        if (sourceConfig.gateway.auth) {
+          sourceConfig.gateway.auth.token = token;
+        }
+      }
+      if (sourceConfig.agents?.defaults?.workspace) {
+        sourceConfig.agents.defaults.workspace = `${resolvedConfigDir}/workspace`;
+      }
+      await writeRemoteConfig(exec, configDir, sourceConfig);
+    } catch (err: any) {
+      await emit({ step: "Generate config", status: "error", detail: `Failed to copy config: ${err.message?.slice(0, 200)}` });
+      await exec.exec(`rm -rf ${configDir}`);
+      return false;
+    }
+
+    // Copy auth-profiles.json and models.json if they exist
+    await exec.exec(`cp ${sourceDir}/agents/main/agent/auth-profiles.json ${configDir}/agents/main/agent/auth-profiles.json 2>/dev/null; true`);
+    await exec.exec(`cp ${sourceDir}/agents/main/agent/models.json ${configDir}/agents/main/agent/models.json 2>/dev/null; true`);
+
+    await emit({ step: "Generate config", status: "done", detail: `Copied from "${copyFrom}", port=${port}` });
+  } else {
+    // Generate minimal config
+    const config = {
+      agents: {
+        defaults: {
+          model: { primary: "moonshot/kimi-k2.5" },
+          workspace: `${resolvedConfigDir}/workspace`,
+          compaction: { mode: "safeguard" },
+          maxConcurrent: 4,
+          subagents: { maxConcurrent: 8 },
+        },
+        list: [{ id: "main" }],
+      },
+      gateway: {
+        port,
+        mode: "local",
+        bind: "lan",
+        auth: { mode: "token", token },
+        http: { endpoints: { responses: { enabled: true } } },
+      },
+    };
+
+    try {
+      await writeRemoteConfig(exec, configDir, config);
+    } catch (err: any) {
+      await emit({ step: "Generate config", status: "error", detail: `Failed to write config: ${err.message?.slice(0, 200)}` });
+      await exec.exec(`rm -rf ${configDir}`);
+      return false;
+    }
+    await emit({ step: "Generate config", status: "done", detail: `Minimal config, port=${port}` });
+  }
+
+  // Step 5: Create systemd service
+  await emit({ step: "Create systemd service", status: "running" });
+  const serviceName = `openclaw-gateway-${profile}`;
+  const unitDir = "$HOME/.config/systemd/user";
+  const serviceContent = `[Unit]
+Description=OpenClaw Gateway (${profile})
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=openclaw --profile ${profile} gateway --port ${port}
+Restart=on-failure
+RestartSec=5
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=default.target`;
+
+  const mkdirUnitR = await exec.exec(`mkdir -p ${unitDir}`);
+  if (mkdirUnitR.exitCode !== 0) {
+    await emit({ step: "Create systemd service", status: "error", detail: "Failed to create systemd user directory" });
+    return false;
+  }
+
+  const writeServiceR = await exec.exec(`cat > ${unitDir}/${serviceName}.service << 'CLAWCTL_EOF'\n${serviceContent}\nCLAWCTL_EOF`);
+  if (writeServiceR.exitCode !== 0) {
+    await emit({ step: "Create systemd service", status: "error", detail: (writeServiceR.stderr || writeServiceR.stdout).slice(0, 200) });
+    return false;
+  }
+  await emit({ step: "Create systemd service", status: "done", detail: `${serviceName}.service` });
+
+  // Step 6: Start service
+  await emit({ step: "Start service", status: "running" });
+  const startCmd = `systemctl --user daemon-reload && systemctl --user enable ${serviceName} && systemctl --user start ${serviceName}`;
+  const startR = await exec.exec(`${startCmd} 2>&1`);
+  if (startR.exitCode !== 0) {
+    await emit({ step: "Start service", status: "error", detail: (startR.stderr || startR.stdout).slice(0, 200) });
+    return false;
+  }
+  await emit({ step: "Start service", status: "done", detail: `${serviceName} enabled and started` });
+
+  // Step 7: Verify
+  await emit({ step: "Verify", status: "running" });
+  await new Promise((r) => setTimeout(r, 3000));
+  const listenCheck = await exec.exec(`ss -tlnp 2>/dev/null | grep ':${port} ' || true`);
+  if (listenCheck.stdout.trim()) {
+    await emit({ step: "Verify", status: "done", detail: `Port ${port} is listening` });
+  } else {
+    await emit({ step: "Verify", status: "error", detail: `Port ${port} is not listening after 3s` });
+    return false;
   }
 
   return true;
