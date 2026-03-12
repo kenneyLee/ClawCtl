@@ -812,7 +812,9 @@ export function Dashboard() {
     const m = inst.id.match(/^ssh-(\d+)-/);
     if (m) hostIdsWithInstances.add(parseInt(m[1]));
   }
-  const emptyHosts = hosts.filter((h) => !hostIdsWithInstances.has(h.id));
+  const emptyHosts = hosts.filter((h) => !hostIdsWithInstances.has(h.id)).filter((h, i, arr) =>
+    arr.findIndex((x) => x.host === h.host && x.port === h.port && x.username === h.username) === i
+  );
 
   const totalSessions = instances.reduce((s, i) => s + i.sessions.length, 0);
   const totalAgents = instances.reduce((s, i) => s + i.agents.length, 0);
