@@ -435,7 +435,7 @@ export async function streamChannelCreate(
     }
     // Strip /dist/... or /bin/... to get install root
     const clawBin = whichR.stdout.trim();
-    const installDir = clawBin.replace(/\/(dist|bin)\/.*$/, "");
+    const installDir = clawBin.replace(/\/[^/]+\.mjs$/, "").replace(/\/(dist|bin)\/.*$/, "");
     const extDir = `${installDir}/${def.extensionDir}`;
     const depCheck = await exec.exec(`test -d "${extDir}/node_modules/${def.depCheckPath}" && echo yes`);
     const depsInstalled = depCheck.stdout.trim() === "yes";
