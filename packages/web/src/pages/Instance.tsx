@@ -858,20 +858,29 @@ function LlmTab({ inst }: { inst: InstanceInfo }) {
     setKeysLoading(false);
   }, [inst.id]);
 
-  // Fetch keys when tab mounts + trigger background refresh
+  // Fetch keys when tab mounts + trigger background refresh (5-min cooldown unless expired keys exist)
+  const lastRefreshRef = useRef<Record<string, number>>({});
   useEffect(() => {
     fetchKeys();
     let pollTimer: ReturnType<typeof setInterval>;
-    post<{ refreshing: number }>(`/lifecycle/${inst.id}/keys/refresh`).then((r) => {
-      if (r.refreshing > 0) {
-        let polls = 0;
-        pollTimer = setInterval(async () => {
-          await fetchKeys();
-          polls++;
-          if (polls >= 10) clearInterval(pollTimer);
-        }, 3000);
-      }
-    }).catch(() => {});
+    const REFRESH_COOLDOWN = 5 * 60_000; // 5 minutes
+    const lastRefresh = lastRefreshRef.current[inst.id] || 0;
+    const hasExpiredKey = keys.some(k => k.expiresAt && k.expiresAt < Date.now());
+    const cooldownElapsed = Date.now() - lastRefresh > REFRESH_COOLDOWN;
+
+    if (cooldownElapsed || hasExpiredKey) {
+      lastRefreshRef.current[inst.id] = Date.now();
+      post<{ refreshing: number }>(`/lifecycle/${inst.id}/keys/refresh`).then((r) => {
+        if (r.refreshing > 0) {
+          let polls = 0;
+          pollTimer = setInterval(async () => {
+            await fetchKeys();
+            polls++;
+            if (polls >= 10) clearInterval(pollTimer);
+          }, 3000);
+        }
+      }).catch(() => {});
+    }
     return () => { if (pollTimer) clearInterval(pollTimer); };
   }, [inst.id, fetchKeys]);
 
