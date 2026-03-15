@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { RefreshCw, Search, X, LayoutGrid, List, Trash2, ShieldAlert, Store, Server } from "lucide-react";
 import {
@@ -664,37 +664,42 @@ function InstalledSkillsView({ instances, catalog, t }: {
   const connected = instances.filter((inst) => inst.connection.status === "connected");
   const bundledNames = useMemo(() => new Set(catalog.map((c) => c.name)), [catalog]);
 
-  // Collect all unique clawhub skill names — use stable string key to avoid re-fetching on every poll
-  const clawhubSkillKey = useMemo(() => {
-    const names: string[] = [];
+  // Fetch suspicious status for clawhub skills — once on mount, retry on failure
+  useEffect(() => {
+    const names = new Set<string>();
     for (const inst of connected) {
       for (const sk of inst.skills || []) {
-        if (sk.status !== "missing" && !bundledNames.has(sk.name) && !names.includes(sk.name)) names.push(sk.name);
+        if (sk.status !== "missing" && !bundledNames.has(sk.name)) names.add(sk.name);
       }
     }
-    names.sort();
-    return names.join(",");
-  }, [connected, bundledNames]);
+    if (names.size === 0) return;
+    const slugs = Array.from(names).slice(0, 30);
 
-  // Fetch suspicious status for clawhub skills (only when skill list actually changes)
-  const suspiciousFetchedRef = useRef<string>("");
-  useEffect(() => {
-    if (!clawhubSkillKey || clawhubSkillKey === suspiciousFetchedRef.current) return;
-    suspiciousFetchedRef.current = clawhubSkillKey;
-    const slugs = clawhubSkillKey.split(",").slice(0, 30);
-    get<{ details: Record<string, { suspicious?: boolean }> }>(
-      `/skills/clawhub/details?slugs=${encodeURIComponent(slugs.join(","))}`,
-    ).then((res) => {
-      if (!res.details) return;
-      setSuspiciousSkills((prev) => {
-        const next = new Set(prev);
-        for (const [slug, d] of Object.entries(res.details)) {
-          if (d.suspicious) next.add(slug); else next.delete(slug);
-        }
-        return next;
+    let retryTimer: ReturnType<typeof setTimeout>;
+    let cancelled = false;
+
+    const fetchSuspicious = () => {
+      get<{ details: Record<string, { suspicious?: boolean }> }>(
+        `/skills/clawhub/details?slugs=${encodeURIComponent(slugs.join(","))}`,
+      ).then((res) => {
+        if (cancelled || !res.details) return;
+        setSuspiciousSkills((prev) => {
+          const next = new Set(prev);
+          for (const [slug, d] of Object.entries(res.details)) {
+            if (d.suspicious) next.add(slug); else next.delete(slug);
+          }
+          return next;
+        });
+      }).catch(() => {
+        // Retry after 30s on failure (rate limit, network error)
+        if (!cancelled) retryTimer = setTimeout(fetchSuspicious, 30_000);
       });
-    }).catch(() => {});
-  }, [clawhubSkillKey]);
+    };
+
+    fetchSuspicious();
+    return () => { cancelled = true; clearTimeout(retryTimer); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected.length]);
 
   const handleUninstall = async (instanceId: string, skillName: string, agentIds: string[]) => {
     setUninstalling(`${instanceId}:${skillName}`);
