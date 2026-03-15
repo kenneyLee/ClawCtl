@@ -10,9 +10,19 @@ const STORAGE_STATE = "e2e/.auth-state.json";
 async function globalSetup() {
   const ctx = await request.newContext({ baseURL: BASE });
 
-  // Check if setup is needed
-  const statusRes = await ctx.get("/api/auth/status");
-  const { needsSetup } = await statusRes.json();
+  // Wait for server to be ready (up to 30s)
+  let needsSetup = false;
+  for (let i = 0; i < 30; i++) {
+    try {
+      const res = await ctx.get("/api/auth/status");
+      const data = await res.json();
+      needsSetup = !!data.needsSetup;
+      break;
+    } catch {
+      if (i === 29) throw new Error("Server did not start within 30s");
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  }
 
   if (needsSetup) {
     // First run — create admin account
