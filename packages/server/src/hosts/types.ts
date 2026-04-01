@@ -9,6 +9,8 @@ export interface RemoteHost {
   authMethod: AuthMethod;
   /** Encrypted password or private key content */
   credential: string;
+  /** Comma-separated glob patterns for additional scan directories */
+  scanDirs: string | null;
   created_at: string;
   last_scan_at: string | null;
   last_scan_error: string | null;
@@ -22,6 +24,7 @@ export interface RemoteHostRow {
   username: string;
   auth_method: AuthMethod;
   credential_enc: string;
+  scan_dirs: string | null;
   created_at: string;
   last_scan_at: string | null;
   last_scan_error: string | null;
@@ -34,4 +37,5 @@ export interface CreateHostInput {
   username: string;
   authMethod: AuthMethod;
   credential: string;
+  scanDirs?: string;
 }

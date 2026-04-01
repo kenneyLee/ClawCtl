@@ -18,18 +18,23 @@ export class HostStore {
         username TEXT NOT NULL,
         auth_method TEXT NOT NULL CHECK(auth_method IN ('password', 'privateKey')),
         credential_enc TEXT NOT NULL,
+        scan_dirs TEXT,
         created_at TEXT DEFAULT (datetime('now')),
         last_scan_at TEXT,
         last_scan_error TEXT
       )
     `);
+    // Migration: add scan_dirs column for existing databases
+    try {
+      this.db.exec("ALTER TABLE remote_hosts ADD COLUMN scan_dirs TEXT");
+    } catch { /* column already exists */ }
   }
 
   create(input: CreateHostInput): RemoteHost {
     const credEnc = encrypt(input.credential, this.encSecret);
     const stmt = this.db.prepare(
-      `INSERT INTO remote_hosts (label, host, port, username, auth_method, credential_enc)
-       VALUES (?, ?, ?, ?, ?, ?)`
+      `INSERT INTO remote_hosts (label, host, port, username, auth_method, credential_enc, scan_dirs)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
     );
     const result = stmt.run(
       input.label,
@@ -38,6 +43,7 @@ export class HostStore {
       input.username,
       input.authMethod,
       credEnc,
+      input.scanDirs || null,
     );
     return this.get(result.lastInsertRowid as number)!;
   }
@@ -73,10 +79,11 @@ export class HostStore {
     const credEnc = input.credential
       ? encrypt(input.credential, this.encSecret)
       : existing.credential_enc;
+    const scanDirs = input.scanDirs !== undefined ? (input.scanDirs || null) : existing.scan_dirs;
 
     this.db.prepare(
-      `UPDATE remote_hosts SET label=?, host=?, port=?, username=?, auth_method=?, credential_enc=? WHERE id=?`
-    ).run(label, host, port, username, authMethod, credEnc, id);
+      `UPDATE remote_hosts SET label=?, host=?, port=?, username=?, auth_method=?, credential_enc=?, scan_dirs=? WHERE id=?`
+    ).run(label, host, port, username, authMethod, credEnc, scanDirs, id);
 
     return this.get(id);
   }
@@ -107,6 +114,7 @@ export class HostStore {
       username: row.username,
       authMethod: row.auth_method,
       credential: "***",
+      scanDirs: row.scan_dirs,
       created_at: row.created_at,
       last_scan_at: row.last_scan_at,
       last_scan_error: row.last_scan_error,

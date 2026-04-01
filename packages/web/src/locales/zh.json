@@ -626,6 +626,9 @@
     "authMethodLabel": "认证方式",
     "passwordOption": "密码",
     "privateKeyOption": "私钥（粘贴内容）",
+    "scanDirsLabel": "扫描目录",
+    "scanDirsPlaceholder": "例如 /home/www/.openclaw*, /opt/openclaw*",
+    "scanDirsHint": "逗号分隔的 glob 路径，指定额外扫描目录。默认始终包含 ~/.openclaw*。",
     "digest": {
       "title": "摘要与通知",
       "daily": "每日",

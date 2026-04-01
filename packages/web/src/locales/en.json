@@ -626,6 +626,9 @@
     "authMethodLabel": "Auth Method",
     "passwordOption": "Password",
     "privateKeyOption": "Private Key (paste content)",
+    "scanDirsLabel": "Scan Directories",
+    "scanDirsPlaceholder": "e.g. /home/www/.openclaw*, /opt/openclaw*",
+    "scanDirsHint": "Comma-separated glob patterns for additional directories to scan. Default ~/.openclaw* is always included.",
     "digest": {
       "title": "Digest & Notifications",
       "daily": "Daily",

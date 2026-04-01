@@ -10,15 +10,28 @@ interface SshCredential {
 export async function discoverRemoteInstances(
   host: RemoteHost,
   credential: SshCredential,
+  scanDirs?: string,
 ): Promise<GatewayConnection[]> {
   // Single SSH command: get binary version + find all configs with a delimiter
   const DELIM = "===CLAWCTL_SEP===";
   const VER_DELIM = "===CLAWCTL_VER===";
   console.log("[discovery] running SSH command");
+
+  // Build scan directories: always include default ~/.openclaw*, plus any custom dirs
+  const dirs = ["~/.openclaw*"];
+  if (scanDirs) {
+    for (const d of scanDirs.split(",")) {
+      const trimmed = d.trim();
+      if (trimmed && !dirs.includes(trimmed)) dirs.push(trimmed);
+    }
+  }
+  const scanDirsStr = dirs.join(" ");
+  console.log(`[discovery] scanning directories: ${scanDirsStr}`);
+
   const stdout = await sshExec(host, credential, `
     echo "${VER_DELIM}"
     openclaw --version 2>/dev/null || npx openclaw --version 2>/dev/null || echo ""
-    for d in ~/.openclaw*; do
+    for d in ${scanDirsStr}; do
       if [ -f "$d/openclaw.json" ]; then
         echo "${DELIM}$d"
         cat "$d/openclaw.json"

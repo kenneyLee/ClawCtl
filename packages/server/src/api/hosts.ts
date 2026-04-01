@@ -36,6 +36,7 @@ export function hostRoutes(hostStore: HostStore, manager: InstanceManager, db: D
       username: body.username,
       authMethod: body.authMethod || "password",
       credential: body.credential,
+      scanDirs: body.scanDirs,
     });
     auditLog(db, c, "host.create", `Added remote host: ${host.label} (${body.host})`);
     return c.json(host, 201);
@@ -99,7 +100,7 @@ export function hostRoutes(hostStore: HostStore, manager: InstanceManager, db: D
 
     let connections;
     try {
-      connections = await discoverRemoteInstances(host, credential);
+      connections = await discoverRemoteInstances(host, credential, host.scanDirs || undefined);
       console.log(`[hosts] discovered ${connections.length} instances`);
     } catch (err: any) {
       console.error(`[hosts] SSH error:`, err);
@@ -143,7 +144,7 @@ export function hostRoutes(hostStore: HostStore, manager: InstanceManager, db: D
         : { privateKey: cred };
 
       try {
-        const connections = await discoverRemoteInstances(host, credential);
+        const connections = await discoverRemoteInstances(host, credential, host.scanDirs || undefined);
         hostStore.updateScanResult(host.id, null);
         for (const conn of connections) {
           try {

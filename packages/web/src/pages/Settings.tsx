@@ -29,6 +29,7 @@ interface RemoteHost {
   port: number;
   username: string;
   authMethod: "password" | "privateKey";
+  scanDirs: string | null;
   last_scan_at: string | null;
   last_scan_error: string | null;
 }
@@ -192,6 +193,9 @@ export function Settings() {
   const [hostUser, setHostUser] = useState("ubuntu");
   const [hostAuthMethod, setHostAuthMethod] = useState<"password" | "privateKey">("password");
   const [hostCredential, setHostCredential] = useState("");
+  const [hostScanDirs, setHostScanDirs] = useState("");
+  const [editingHostId, setEditingHostId] = useState<number | null>(null);
+  const [editScanDirs, setEditScanDirs] = useState("");
   const [scanning, setScanning] = useState<number | null>(null);
   const [scanMsg, setScanMsg] = useState<string | null>(null);
   const [installing, setInstalling] = useState<number | null>(null);
@@ -813,6 +817,7 @@ export function Settings() {
                         <span className="font-medium text-ink">{h.label}</span>
                         <span className="text-sm text-ink-3 font-mono">{h.username}@{h.host}:{h.port}</span>
                         <span className="text-xs px-1.5 py-0.5 rounded bg-s3 text-ink-3">{h.authMethod === "password" ? t("settings.passwordAuth") : t("settings.keyAuth")}</span>
+                        {h.scanDirs && <span className="text-xs px-1.5 py-0.5 rounded bg-s3 text-ink-3" title={h.scanDirs}>📁 {t("settings.scanDirsLabel")}</span>}
                         {hasInstances
                           ? <span className="text-xs px-1.5 py-0.5 rounded bg-ok/10 text-ok">{t("settings.hostRunning")}</span>
                           : h.last_scan_at
@@ -833,6 +838,24 @@ export function Settings() {
                       <div className="mb-2 flex items-center gap-2 px-3 py-2 rounded bg-brand/10 border border-brand/20 animate-pulse">
                         <svg className="animate-spin h-4 w-4 text-brand shrink-0" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
                         <span className="text-sm text-brand">{installStep}<AnimatedDots /></span>
+                      </div>
+                    )}
+                    {editingHostId === h.id && (
+                      <div className="mb-2 p-3 bg-s3 rounded border border-edge">
+                        <label className="block text-xs text-ink-2 mb-1">{t("settings.scanDirsLabel")}</label>
+                        <input value={editScanDirs} onChange={(e) => setEditScanDirs(e.target.value)} placeholder={t("settings.scanDirsPlaceholder")} className="w-full bg-s2 border border-edge rounded px-2 py-1.5 text-sm text-ink placeholder:text-ink-3 mb-2" />
+                        <p className="text-xs text-ink-3 mb-2">{t("settings.scanDirsHint")}</p>
+                        <div className="flex gap-2">
+                          <button onClick={() => { setEditingHostId(null); setEditScanDirs(""); }} className="px-2 py-1 text-xs text-ink-2 hover:text-ink">{t("common.cancel")}</button>
+                          <button onClick={async () => {
+                            try {
+                              await put(`/hosts/${h.id}`, { scanDirs: editScanDirs || undefined });
+                              get<RemoteHost[]>("/hosts").then(setHosts);
+                              setEditingHostId(null);
+                              setEditScanDirs("");
+                            } catch (e: any) { alert(e.message); }
+                          }} className="px-2 py-1 text-xs bg-brand hover:bg-brand-light rounded">{t("common.save")}</button>
+                        </div>
                       </div>
                     )}
                     <div className="flex items-center gap-2 flex-wrap">
@@ -920,6 +943,12 @@ export function Settings() {
                         </button>
                       )}
                       <button
+                        onClick={() => { setEditingHostId(h.id); setEditScanDirs(h.scanDirs || ""); }}
+                        className="px-3 py-1 text-sm rounded bg-s3 text-ink-2 hover:bg-edge hover:text-ink"
+                      >
+                        {t("common.edit")}
+                      </button>
+                      <button
                         onClick={() => setConfirmDeleteHost(h)}
                         className="px-3 py-1 text-sm rounded bg-danger/10 text-danger hover:bg-danger/20"
                       >
@@ -965,14 +994,19 @@ export function Settings() {
                     : <textarea value={hostCredential} onChange={(e) => setHostCredential(e.target.value)} rows={4} placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" className="w-full bg-s2 border border-edge rounded-lg px-3 py-2.5 text-sm text-ink placeholder:text-ink-3 focus:border-brand transition-colors disabled:opacity-50 font-mono" />
                   }
                 </div>
+                <div className="col-span-2">
+                  <label className="block text-xs text-ink-2 mb-1">{t("settings.scanDirsLabel")}</label>
+                  <input value={hostScanDirs} onChange={(e) => setHostScanDirs(e.target.value)} placeholder={t("settings.scanDirsPlaceholder")} className="w-full bg-s2 border border-edge rounded-lg px-3 py-2.5 text-sm text-ink placeholder:text-ink-3 focus:border-brand transition-colors disabled:opacity-50" />
+                  <p className="text-xs text-ink-3 mt-1">{t("settings.scanDirsHint")}</p>
+                </div>
               </div>
               <div className="flex gap-2 justify-end">
-                <button onClick={() => { setShowAddHost(false); setHostLabel(""); setHostAddr(""); setHostPort("22"); setHostUser("ubuntu"); setHostCredential(""); }} className="px-3 py-1.5 text-sm text-ink-2 hover:text-ink">{t("common.cancel")}</button>
+                <button onClick={() => { setShowAddHost(false); setHostLabel(""); setHostAddr(""); setHostPort("22"); setHostUser("ubuntu"); setHostCredential(""); setHostScanDirs(""); }} className="px-3 py-1.5 text-sm text-ink-2 hover:text-ink">{t("common.cancel")}</button>
                 <button
                   onClick={async () => {
                     try {
-                      await post("/hosts", { label: hostLabel || hostAddr, host: hostAddr, port: parseInt(hostPort) || 22, username: hostUser, authMethod: hostAuthMethod, credential: hostCredential });
-                      setShowAddHost(false); setHostLabel(""); setHostAddr(""); setHostPort("22"); setHostUser("ubuntu"); setHostCredential("");
+                      await post("/hosts", { label: hostLabel || hostAddr, host: hostAddr, port: parseInt(hostPort) || 22, username: hostUser, authMethod: hostAuthMethod, credential: hostCredential, scanDirs: hostScanDirs || undefined });
+                      setShowAddHost(false); setHostLabel(""); setHostAddr(""); setHostPort("22"); setHostUser("ubuntu"); setHostCredential(""); setHostScanDirs("");
                       get<RemoteHost[]>("/hosts").then(setHosts);
                     } catch (e: any) { alert(e.message); }
                   }}

@@ -154,12 +154,12 @@ async function start() {
   fetchPricing().then((p) => console.log(`Loaded pricing for ${Object.keys(p).length} models`)).catch(() => {});
 
   const needsSetup = !userStore.hasAnyUser();
-  console.log(`ClawCtl starting on http://localhost:${port}`);
+  console.log(`ClawCtl starting on http://0.0.0.0:${port}`);
   console.log(`Discovered ${manager.getAll().length} instance(s)`);
   if (needsSetup) {
     console.log("First run — open browser to create admin account");
   }
-  const server = serve({ fetch: app.fetch, port });
+  const server = serve({ fetch: app.fetch, port, hostname: "0.0.0.0" });
 
   // Graceful shutdown — close tunnels and WebSocket connections so process can exit
   function shutdown() {
