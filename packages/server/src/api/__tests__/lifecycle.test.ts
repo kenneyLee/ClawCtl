@@ -36,6 +36,7 @@ vi.mock("../../lifecycle/channel-config.js", () => ({
 vi.mock("../../lifecycle/config.js", () => ({
   readRemoteConfig: vi.fn(),
   writeRemoteConfig: vi.fn(),
+  readSoulMarkdown: vi.fn(),
   getConfigDir: vi.fn((profile: string) =>
     profile === "default" ? "$HOME/.openclaw" : `$HOME/.openclaw-${profile}`
   ),
@@ -52,7 +53,7 @@ import { mockAuthMiddleware } from "../../__tests__/helpers/mock-auth.js";
 import { getExecutor, getHostExecutor } from "../../executor/factory.js";
 import { getProcessStatus, stopProcess, startProcess, restartProcess } from "../../lifecycle/service.js";
 import { checkNodeVersion, getVersions, streamInstall } from "../../lifecycle/install.js";
-import { readRemoteConfig, writeRemoteConfig } from "../../lifecycle/config.js";
+import { readRemoteConfig, writeRemoteConfig, readSoulMarkdown } from "../../lifecycle/config.js";
 import { extractModels, mergeAgentConfig, removeAgent } from "../../lifecycle/agent-config.js";
 import { mergeChannelAccountConfig } from "../../lifecycle/channel-config.js";
 
@@ -235,6 +236,28 @@ describe("Lifecycle API routes", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
       });
+      expect(res.status).toBe(404);
+    });
+  });
+
+  describe("GET /:id/soul", () => {
+    it("returns instance SOUL markdown", async () => {
+      const payload = {
+        exists: true,
+        path: "$HOME/.openclaw-main/workspace/SOUL.md",
+        content: "# SOUL\ninstance memory",
+      };
+      vi.mocked(readSoulMarkdown).mockResolvedValue(payload);
+
+      const res = await app.request("/lifecycle/ssh-1-main/soul");
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data).toEqual(payload);
+      expect(readSoulMarkdown).toHaveBeenCalledWith(mockExecutor, "$HOME/.openclaw-main");
+    });
+
+    it("returns 404 for unknown instance", async () => {
+      const res = await app.request("/lifecycle/nonexistent/soul");
       expect(res.status).toBe(404);
     });
   });

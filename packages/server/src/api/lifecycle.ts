@@ -8,7 +8,7 @@ import { auditLog } from "../audit.js";
 import { getExecutor, getHostExecutor } from "../executor/factory.js";
 import { getProcessStatus, stopProcess, startProcess, restartProcess } from "../lifecycle/service.js";
 import { checkNodeVersion, getVersions, streamInstall, streamUninstall, streamChannelCreate } from "../lifecycle/install.js";
-import { readRemoteConfig, writeRemoteConfig, readAuthProfiles, writeAuthProfiles, deleteAuthProfile, getConfigDir, profileFromInstanceId } from "../lifecycle/config.js";
+import { readRemoteConfig, writeRemoteConfig, readSoulMarkdown, readAuthProfiles, writeAuthProfiles, deleteAuthProfile, getConfigDir, profileFromInstanceId } from "../lifecycle/config.js";
 import { verifyProviderKey, maskKey } from "../lifecycle/verify.js";
 import { SnapshotStore } from "../lifecycle/snapshot.js";
 import { extractModels, mergeAgentConfig, removeAgent } from "../lifecycle/agent-config.js";
@@ -214,6 +214,20 @@ export function lifecycleRoutes(hostStore: HostStore, manager: InstanceManager, 
       return c.json(config);
     } catch (err: any) {
       return c.json({ error: `Failed to read config: ${err.message}` }, 500);
+    }
+  });
+
+  app.get("/:id/soul", async (c) => {
+    const id = c.req.param("id");
+    if (!manager.get(id)) return c.json({ error: "instance not found" }, 404);
+    const profile = profileFromInstanceId(id);
+    const configDir = getConfigDir(profile);
+    const exec = getExecutor(id, hostStore);
+    try {
+      const soul = await readSoulMarkdown(exec, configDir);
+      return c.json(soul);
+    } catch (err: any) {
+      return c.json({ error: `Failed to read SOUL.md: ${err.message}` }, 500);
     }
   });
 
@@ -1544,4 +1558,3 @@ function parsePortFromInstance(inst: any): number {
     return parseInt(url.port) || 18789;
   } catch { return 18789; }
 }
-

@@ -1721,7 +1721,11 @@ function ControlTab({ inst }: { inst: InstanceInfo }) {
   const [status, setStatus] = useState<{ running: boolean; pid?: number } | null>(null);
   const [versions, setVersions] = useState<{ node: any; openclaw: any } | null>(null);
   const [configText, setConfigText] = useState("");
+  const [soulText, setSoulText] = useState("");
+  const [soulPath, setSoulPath] = useState("");
+  const [soulExists, setSoulExists] = useState<boolean | null>(null);
   const [configError, setConfigError] = useState("");
+  const [soulError, setSoulError] = useState("");
   const [configDirty, setConfigDirty] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
   const [showLogs, setShowLogs] = useState(false);
@@ -1803,12 +1807,27 @@ function ControlTab({ inst }: { inst: InstanceInfo }) {
     }
   };
 
+  const fetchSoul = async () => {
+    try {
+      const soul = await get<{ exists: boolean; path: string; content: string }>(`/lifecycle/${inst.id}/soul`);
+      setSoulExists(soul.exists);
+      setSoulPath(soul.path);
+      setSoulText(soul.content || "");
+      setSoulError("");
+    } catch (e: any) {
+      setSoulExists(null);
+      setSoulPath("");
+      setSoulText("");
+      setSoulError(e.message || t("instance.control.failedLoadSoul"));
+    }
+  };
+
   const fetchSnaps = async () => {
     try { setSnaps(await get<any[]>(`/lifecycle/${inst.id}/snapshots`)); } catch {}
   };
 
   useEffect(() => {
-    Promise.all([fetchStatus(), fetchVersions(), fetchConfig(), fetchSnaps()])
+    Promise.all([fetchStatus(), fetchVersions(), fetchConfig(), fetchSoul(), fetchSnaps()])
       .finally(() => setInitialLoading(false));
     const timer = setInterval(fetchStatus, 10_000);
     return () => clearInterval(timer);
@@ -2086,6 +2105,24 @@ function ControlTab({ inst }: { inst: InstanceInfo }) {
           spellCheck={false}
         />
         {configError && <p className="px-4 py-2 text-sm text-danger">{configError}</p>}
+      </div>
+
+      <div className="bg-s1 border border-edge rounded-card shadow-card">
+        <div className="flex items-center justify-between p-4 border-b border-edge">
+          <div>
+            <h3 className="text-sm font-semibold text-ink-2 uppercase tracking-wider">{t("instance.control.soulFile")}</h3>
+            {soulPath && <p className="mt-1 text-xs text-ink-3 font-mono">{soulPath}</p>}
+          </div>
+        </div>
+        {soulError ? (
+          <p className="px-4 py-3 text-sm text-danger">{soulError}</p>
+        ) : soulExists === false ? (
+          <p className="px-4 py-3 text-sm text-ink-3">{t("instance.control.soulNotFound")}</p>
+        ) : (
+          <pre className="p-4 text-xs overflow-auto max-h-80 bg-s2 whitespace-pre-wrap break-words">
+            {soulText || t("instance.control.soulEmpty")}
+          </pre>
+        )}
       </div>
 
       {/* Config Snapshots */}

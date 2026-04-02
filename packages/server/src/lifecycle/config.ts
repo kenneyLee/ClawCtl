@@ -22,6 +22,17 @@ export async function writeRemoteConfig(exec: CommandExecutor, configDir: string
   if (r.exitCode !== 0) throw new Error(`Failed to write config: ${r.stderr}`);
 }
 
+export async function readSoulMarkdown(
+  exec: CommandExecutor,
+  configDir: string,
+): Promise<{ exists: boolean; path: string; content: string }> {
+  const path = `${configDir}/workspace/SOUL.md`;
+  const r = await exec.exec(`if [ -f "${path}" ]; then cat "${path}"; else exit 2; fi`);
+  if (r.exitCode === 0) return { exists: true, path, content: r.stdout };
+  if (r.exitCode === 2) return { exists: false, path, content: "" };
+  throw new Error(`Failed to read SOUL.md: ${r.stderr}`);
+}
+
 /** Read auth-profiles.json for a specific agent */
 export async function readAuthProfiles(exec: CommandExecutor, configDir: string, agentId: string): Promise<any> {
   const path = `${configDir}/agents/${agentId}/agent/auth-profiles.json`;
