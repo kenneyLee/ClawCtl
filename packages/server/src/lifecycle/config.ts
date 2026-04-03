@@ -4,6 +4,10 @@ export function getConfigDir(profile: string): string {
   return profile === "default" ? "$HOME/.openclaw" : `$HOME/.openclaw-${profile}`;
 }
 
+export function resolveConfigDir(instance: { connection?: { configDir?: string } }, fallbackProfile: string): string {
+  return instance.connection?.configDir || getConfigDir(fallbackProfile);
+}
+
 /** Extract profile name from instance ID (e.g. "ssh-1-feishu" → "feishu") */
 export function profileFromInstanceId(instanceId: string): string {
   const parts = instanceId.split("-");
@@ -26,7 +30,10 @@ export async function readSoulMarkdown(
   exec: CommandExecutor,
   configDir: string,
 ): Promise<{ exists: boolean; path: string; content: string }> {
-  const path = `${configDir}/workspace/SOUL.md`;
+  const workspaceRoot = configDir.endsWith("/.openclaw")
+    ? configDir.slice(0, -"/.openclaw".length)
+    : configDir;
+  const path = `${workspaceRoot}/workspace/SOUL.md`;
   const r = await exec.exec(`if [ -f "${path}" ]; then cat "${path}"; else exit 2; fi`);
   if (r.exitCode === 0) return { exists: true, path, content: r.stdout };
   if (r.exitCode === 2) return { exists: false, path, content: "" };

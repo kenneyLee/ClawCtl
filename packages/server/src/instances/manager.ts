@@ -21,9 +21,16 @@ export class InstanceManager extends EventEmitter {
   async init() {
     // Load persisted instances from DB
     if (this.db) {
-      const rows = this.db.prepare("SELECT id, url, token, label FROM instances").all() as Array<{ id: string; url: string; token: string | null; label: string | null }>;
+      const rows = this.db.prepare("SELECT id, url, token, label, config_dir FROM instances").all() as Array<{ id: string; url: string; token: string | null; label: string | null; config_dir: string | null }>;
       for (const row of rows) {
-        this.connectInstance({ id: row.id, url: row.url, token: row.token || undefined, label: row.label || undefined, status: "disconnected" });
+        this.connectInstance({
+          id: row.id,
+          url: row.url,
+          token: row.token || undefined,
+          label: row.label || undefined,
+          configDir: row.config_dir || undefined,
+          status: "disconnected",
+        });
       }
     }
 
@@ -38,12 +45,13 @@ export class InstanceManager extends EventEmitter {
     this.persistInstance(conn);
     const existing = this.clients.get(conn.id);
     if (existing) {
+      if (conn.label) existing.conn.label = conn.label;
+      if (conn.configDir) existing.conn.configDir = conn.configDir;
       // Update token/url on existing connection and reconnect if changed
       const changed = existing.conn.token !== conn.token || existing.conn.url !== conn.url;
       if (changed) {
         existing.conn.token = conn.token;
         existing.conn.url = conn.url;
-        if (conn.label) existing.conn.label = conn.label;
         this.doConnect(conn.id);
       }
       return;
@@ -54,8 +62,8 @@ export class InstanceManager extends EventEmitter {
   private persistInstance(conn: GatewayConnection) {
     if (!this.db) return;
     this.db.prepare(
-      "INSERT INTO instances (id, url, token, label) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET url=excluded.url, token=excluded.token, label=excluded.label"
-    ).run(conn.id, conn.url, conn.token || null, conn.label || null);
+      "INSERT INTO instances (id, url, token, label, config_dir) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET url=excluded.url, token=excluded.token, label=excluded.label, config_dir=excluded.config_dir"
+    ).run(conn.id, conn.url, conn.token || null, conn.label || null, conn.configDir || null);
   }
 
   private connectInstance(conn: GatewayConnection) {

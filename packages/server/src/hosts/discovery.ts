@@ -12,29 +12,40 @@ export async function discoverRemoteInstances(
   credential: SshCredential,
   scanDirs?: string,
 ): Promise<GatewayConnection[]> {
+  const shellQuote = (value: string) => `'${value.replace(/'/g, `'\"'\"'`)}'`;
+
   // Single SSH command: get binary version + find all configs with a delimiter
   const DELIM = "===CLAWCTL_SEP===";
   const VER_DELIM = "===CLAWCTL_VER===";
   console.log("[discovery] running SSH command");
 
   // Build scan directories: always include default ~/.openclaw*, plus any custom dirs
-  const dirs = ["~/.openclaw*"];
+  const defaultGlob = "~/.openclaw*";
+  const customDirs: string[] = [];
   if (scanDirs) {
     for (const d of scanDirs.split(",")) {
       const trimmed = d.trim();
-      if (trimmed && !dirs.includes(trimmed)) dirs.push(trimmed);
+      if (trimmed && !customDirs.includes(trimmed)) customDirs.push(trimmed);
     }
   }
-  const scanDirsStr = dirs.join(" ");
+  const scanDirsStr = [defaultGlob, ...customDirs].join(" ");
   console.log(`[discovery] scanning directories: ${scanDirsStr}`);
+  const customDirList = customDirs.map(shellQuote).join(" ");
 
   const stdout = await sshExec(host, credential, `
     echo "${VER_DELIM}"
     openclaw --version 2>/dev/null || npx openclaw --version 2>/dev/null || echo ""
-    for d in ${scanDirsStr}; do
+    for d in ${defaultGlob}${customDirList ? ` ${customDirList}` : ""}; do
       if [ -f "$d/openclaw.json" ]; then
         echo "${DELIM}$d"
         cat "$d/openclaw.json"
+      fi
+      if [ -d "$d" ]; then
+        find "$d" -maxdepth 4 \\( -path '*/.openclaw/openclaw.json' -o -path '*/openclaw.json' \\) -type f 2>/dev/null | sort | while IFS= read -r cfg; do
+          parent_dir="$(dirname "$cfg")"
+          echo "${DELIM}$parent_dir"
+          cat "$cfg"
+        done
       fi
     done; true
   `);
@@ -67,8 +78,12 @@ export async function discoverRemoteInstances(
     try {
       const config = JSON.parse(jsonContent);
       const port = config?.gateway?.port || 18789;
-      const dirName = dirPath.split("/").pop() || "";
-      const profileName = dirName === ".openclaw" ? "default" : dirName.replace(".openclaw-", "");
+      const pathParts = dirPath.split("/").filter(Boolean);
+      const dirName = pathParts[pathParts.length - 1] || "";
+      const instanceDirName = dirName === ".openclaw"
+        ? (pathParts[pathParts.length - 2] || dirName)
+        : dirName;
+      const profileName = instanceDirName === ".openclaw" ? "default" : instanceDirName.replace(".openclaw-", "");
       console.log(`[discovery] parsed ${profileName} -> port=${port}`);
 
       // Deduplicate by port — same port means same Gateway process
@@ -83,6 +98,7 @@ export async function discoverRemoteInstances(
         url: `ws://${host.host}:${port}`,
         token: config?.gateway?.auth?.token,
         label: `${host.label}/${profileName}`,
+        configDir: dirPath,
         status: "disconnected",
         binaryVersion,
         remotePort: port,

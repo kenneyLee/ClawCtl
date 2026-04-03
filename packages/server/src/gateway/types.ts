@@ -3,6 +3,7 @@ export interface GatewayConnection {
   url: string;
   token?: string;
   label?: string;
+  configDir?: string;
   status: "connecting" | "connected" | "disconnected" | "error";
   error?: string;
   /** Version from the installed binary (via SSH), more reliable than Gateway handshake */

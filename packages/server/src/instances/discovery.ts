@@ -24,6 +24,7 @@ export function discoverLocalInstances(): GatewayConnection[] {
           url: `ws://127.0.0.1:${port}`,
           token: config?.gateway?.auth?.token,
           label: profileName,
+          configDir: path.join(home, entry),
           status: "disconnected",
         });
       } catch { /* skip malformed config */ }

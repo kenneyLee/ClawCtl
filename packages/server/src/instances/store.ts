@@ -16,6 +16,7 @@ export function initDb(): Database.Database {
       url TEXT NOT NULL,
       token TEXT,
       label TEXT,
+      config_dir TEXT,
       auto_discovered INTEGER DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
@@ -81,6 +82,7 @@ export function initDb(): Database.Database {
 
   // Migrations
   try { db.exec("ALTER TABLE operations ADD COLUMN operator TEXT"); } catch { /* column already exists */ }
+  try { db.exec("ALTER TABLE instances ADD COLUMN config_dir TEXT"); } catch { /* column already exists */ }
 
   return db;
 }
