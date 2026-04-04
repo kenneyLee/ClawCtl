@@ -40,5 +40,14 @@ export function instanceRoutes(manager: InstanceManager, db: Database.Database) 
     return c.json(info);
   });
 
+  app.patch("/:id", requireWrite("instances"), async (c) => {
+    const id = c.req.param("id");
+    const body = await c.req.json<{ label?: string }>();
+    const ok = manager.updateLabel(id, body.label?.trim() || undefined);
+    if (!ok) return c.json({ error: "instance not found" }, 404);
+    auditLog(db, c, "instance.rename", `Renamed instance to: ${body.label?.trim() || id}`, id);
+    return c.json({ ok: true });
+  });
+
   return app;
 }

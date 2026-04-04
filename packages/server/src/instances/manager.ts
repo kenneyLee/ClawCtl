@@ -204,6 +204,20 @@ export class InstanceManager extends EventEmitter {
     return this.clients.get(id);
   }
 
+  updateLabel(id: string, label?: string): boolean {
+    const client = this.clients.get(id);
+    const instance = this.instances.get(id);
+    if (!client || !instance) return false;
+
+    client.conn.label = label;
+    instance.connection.label = label;
+    if (this.db) {
+      this.db.prepare("UPDATE instances SET label = ? WHERE id = ?").run(label || null, id);
+    }
+    this.emit("change");
+    return true;
+  }
+
   listConnections(): GatewayConnection[] {
     return [...this.clients.values()].map((c) => c.conn);
   }

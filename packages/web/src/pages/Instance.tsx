@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useParams, Link, useSearchParams } from "react-router-dom";
 import { ChevronLeft, ChevronUp, ChevronDown, RefreshCw, ArrowUpDown, Play, Square, RotateCcw, Save, Terminal, Camera, GitCompare, Trash2, Users, Plus, Radio, LogOut, Search, Stethoscope, ShieldAlert, Share2 } from "lucide-react";
 import { useInstances, type InstanceInfo } from "../hooks/useInstances";
-import { api, get, post, put } from "../lib/api";
+import { api, get, post, put, patch } from "../lib/api";
 import { del } from "../lib/api";
 import { AgentForm, type AgentFormValues } from "../components/AgentForm";
 import { ChannelForm, type ChannelFormValues } from "../components/ChannelForm";
@@ -3045,6 +3045,9 @@ export function Instance() {
   const [activeTab, setActiveTab] = useState<Tab>("overview");
   const [selectedAgentId, setSelectedAgentId] = useState<string | undefined>();
   const [searchParams] = useSearchParams();
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [labelDraft, setLabelDraft] = useState("");
+  const [renaming, setRenaming] = useState(false);
 
   useEffect(() => {
     const tab = searchParams.get("tab") as Tab;
@@ -3054,6 +3057,11 @@ export function Instance() {
   }, [searchParams]);
 
   const inst = instances.find((i) => i.id === id);
+
+  useEffect(() => {
+    setLabelDraft(inst?.connection.label || "");
+    setIsRenaming(false);
+  }, [inst?.id, inst?.connection.label]);
 
   if (!inst) {
     if (loading) {
@@ -3071,6 +3079,18 @@ export function Instance() {
       </div>
     );
   }
+
+  const saveLabel = async () => {
+    if (!inst || renaming) return;
+    setRenaming(true);
+    try {
+      await patch(`/instances/${inst.id}`, { label: labelDraft });
+      setIsRenaming(false);
+      refresh();
+    } finally {
+      setRenaming(false);
+    }
+  };
 
   const tabs: { key: Tab; label: string }[] = [
     { key: "overview", label: t("instance.overviewTab") },
@@ -3091,7 +3111,50 @@ export function Instance() {
         <div className="flex items-center gap-3 mb-4">
           <Link to="/" className="text-ink-3 hover:text-ink"><ChevronLeft size={20} /></Link>
           <StatusDot status={inst.connection.status} />
-          <h1 className="text-2xl font-bold text-ink">{inst.connection.label || inst.id}</h1>
+          {isRenaming ? (
+            <div className="flex items-center gap-2">
+              <input
+                value={labelDraft}
+                onChange={(e) => setLabelDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void saveLabel();
+                  if (e.key === "Escape") {
+                    setIsRenaming(false);
+                    setLabelDraft(inst.connection.label || "");
+                  }
+                }}
+                className="px-2 py-1 text-lg font-bold bg-s2 border border-edge rounded text-ink min-w-[320px]"
+                placeholder={inst.id}
+                autoFocus
+              />
+              <button
+                onClick={() => void saveLabel()}
+                disabled={renaming}
+                className="px-2 py-1 text-xs rounded bg-brand text-white disabled:opacity-50"
+              >
+                {t("common.save")}
+              </button>
+              <button
+                onClick={() => {
+                  setIsRenaming(false);
+                  setLabelDraft(inst.connection.label || "");
+                }}
+                className="px-2 py-1 text-xs rounded bg-s2 text-ink-2"
+              >
+                {t("common.cancel")}
+              </button>
+            </div>
+          ) : (
+            <>
+              <h1 className="text-2xl font-bold text-ink">{inst.connection.label || inst.id}</h1>
+              <button
+                onClick={() => setIsRenaming(true)}
+                className="text-xs px-2 py-1 rounded bg-s2 text-ink-2 hover:text-ink"
+              >
+                {t("instance.rename")}
+              </button>
+            </>
+          )}
           {inst.version && <span className="text-sm text-ink-3">v{inst.version}</span>}
           <button
             onClick={() => post(`/instances/${inst.id}/refresh`).then(refresh)}

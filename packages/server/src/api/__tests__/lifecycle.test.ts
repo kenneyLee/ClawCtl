@@ -40,6 +40,9 @@ vi.mock("../../lifecycle/config.js", () => ({
   getConfigDir: vi.fn((profile: string) =>
     profile === "default" ? "$HOME/.openclaw" : `$HOME/.openclaw-${profile}`
   ),
+  resolveConfigDir: vi.fn((inst: any, profile: string) =>
+    inst?.connection?.configDir || (profile === "default" ? "$HOME/.openclaw" : `$HOME/.openclaw-${profile}`)
+  ),
   profileFromInstanceId: vi.fn((id: string) => {
     const parts = id.split("-");
     return parts[parts.length - 1];

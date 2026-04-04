@@ -338,6 +338,7 @@
     "estimatedCostHeader": "Est. Cost"
   },
   "instance": {
+    "rename": "Rename",
     "loadingInstance": "Loading instance...",
     "instanceNotFound": "Instance not found",
     "backToDashboard": "Back to Dashboard",

@@ -338,6 +338,7 @@
     "estimatedCostHeader": "预估费用"
   },
   "instance": {
+    "rename": "改名",
     "loadingInstance": "正在加载实例...",
     "instanceNotFound": "未找到实例",
     "backToDashboard": "返回仪表盘",
