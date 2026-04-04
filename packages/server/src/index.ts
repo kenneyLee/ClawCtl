@@ -98,9 +98,6 @@ app.use("/*", serveStatic({ root: "../web/dist" }));
 const port = parseInt(process.env.CLAWCTL_PORT || "7100");
 
 async function start() {
-  // Clear SSH-discovered instances — they'll be re-discovered with fresh tunnels
-  db.prepare("DELETE FROM instances WHERE id LIKE 'ssh-%'").run();
-
   await manager.init().catch((err) => {
     console.warn("Instance auto-discovery warning:", err.message);
   });
