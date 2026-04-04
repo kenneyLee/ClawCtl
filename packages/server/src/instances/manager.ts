@@ -45,7 +45,7 @@ export class InstanceManager extends EventEmitter {
     this.persistInstance(conn);
     const existing = this.clients.get(conn.id);
     if (existing) {
-      if (conn.label) existing.conn.label = conn.label;
+      if (!existing.conn.label && conn.label) existing.conn.label = conn.label;
       if (conn.configDir) existing.conn.configDir = conn.configDir;
       // Update token/url on existing connection and reconnect if changed
       const changed = existing.conn.token !== conn.token || existing.conn.url !== conn.url;
@@ -62,7 +62,7 @@ export class InstanceManager extends EventEmitter {
   private persistInstance(conn: GatewayConnection) {
     if (!this.db) return;
     this.db.prepare(
-      "INSERT INTO instances (id, url, token, label, config_dir) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET url=excluded.url, token=excluded.token, label=excluded.label, config_dir=excluded.config_dir"
+      "INSERT INTO instances (id, url, token, label, config_dir) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET url=excluded.url, token=excluded.token, label=COALESCE(instances.label, excluded.label), config_dir=excluded.config_dir"
     ).run(conn.id, conn.url, conn.token || null, conn.label || null, conn.configDir || null);
   }
 
