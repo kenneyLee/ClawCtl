@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams, Link, useSearchParams } from "react-router-dom";
-import { ChevronLeft, ChevronUp, ChevronDown, RefreshCw, ArrowUpDown, Play, Square, RotateCcw, Save, Terminal, Camera, GitCompare, Trash2, Users, Plus, Radio, LogOut, Search, Stethoscope, ShieldAlert, Share2 } from "lucide-react";
+import { ChevronLeft, ChevronUp, ChevronDown, RefreshCw, ArrowUpDown, Play, Square, RotateCcw, Save, Terminal, Camera, GitCompare, Trash2, Users, Plus, Radio, LogOut, Search, Stethoscope, ShieldAlert, Share2, X } from "lucide-react";
 import { useInstances, type InstanceInfo } from "../hooks/useInstances";
 import { api, get, post, put, patch } from "../lib/api";
 import { del } from "../lib/api";
@@ -419,6 +419,7 @@ function AgentsTab({ inst, initialAgentId, onSwitchTab }: { inst: InstanceInfo; 
   const [proxyStatus, setProxyStatus] = useState<ProxyStatus | null>(null);
   const [proxyLoading, setProxyLoading] = useState(false);
   const [proxyBusy, setProxyBusy] = useState(false);
+  const [proxyAllowlist, setProxyAllowlist] = useState(DEFAULT_PROXY_ALLOWLIST);
 
   const fetchData = async () => {
     setLoading(true);
@@ -467,8 +468,10 @@ function AgentsTab({ inst, initialAgentId, onSwitchTab }: { inst: InstanceInfo; 
     try {
       const r = await get<ProxyStatus>(`/lifecycle/${inst.id}/proxy-status`);
       setProxyStatus(r || null);
+      setProxyAllowlist(r?.allowlist || DEFAULT_PROXY_ALLOWLIST);
     } catch {
       setProxyStatus(null);
+      setProxyAllowlist(DEFAULT_PROXY_ALLOWLIST);
     } finally {
       setProxyLoading(false);
     }
@@ -663,8 +666,9 @@ function AgentsTab({ inst, initialAgentId, onSwitchTab }: { inst: InstanceInfo; 
                       onClick={async () => {
                         setProxyBusy(true);
                         try {
-                          const r = await post<ProxyStatus>(`/lifecycle/${inst.id}/proxy-route/enable`, {});
+                          const r = await post<ProxyStatus>(`/lifecycle/${inst.id}/proxy-route/enable`, { proxyAllowlist });
                           setProxyStatus(r);
+                          setProxyAllowlist(r.allowlist || "");
                           setError("");
                         } catch (e: any) {
                           setError(e.message);
@@ -672,7 +676,7 @@ function AgentsTab({ inst, initialAgentId, onSwitchTab }: { inst: InstanceInfo; 
                           setProxyBusy(false);
                         }
                       }}
-                      disabled={proxyBusy || proxyStatus?.instanceProxyEnabled}
+                      disabled={proxyBusy || proxyStatus?.instanceProxyEnabled || proxyStatus?.canEnable === false}
                       className="px-3 py-1.5 bg-brand hover:bg-brand-light rounded-lg text-xs font-medium disabled:opacity-50"
                     >
                       {proxyBusy ? t("instance.llm.proxyEnabling") : proxyStatus?.instanceProxyEnabled ? t("instance.llm.proxyEnabled") : t("instance.llm.proxyEnable")}
@@ -694,12 +698,29 @@ function AgentsTab({ inst, initialAgentId, onSwitchTab }: { inst: InstanceInfo; 
                           {proxyStatus.instanceProxyEnabled ? t("instance.llm.proxyEnabled") : t("instance.llm.proxyNotEnabled")}
                         </span>
                       </div>
+                      <div className="text-ink-2">
+                        {t("instance.llm.proxySupportStatus")}:
+                        <span className={`ml-1 ${proxyStatus.canEnable ? "text-ok" : "text-danger"}`}>
+                          {proxyStatus.canEnable ? t("instance.llm.proxySupported") : t("instance.llm.proxyUnsupported")}
+                        </span>
+                      </div>
+                      <div className="text-ink-3">{proxyStatus.reason || "\u00A0"}</div>
                       <div className="text-ink-3 font-mono break-all">{proxyStatus.serviceUnit}</div>
                       <div className="text-ink-3 font-mono break-all">{proxyStatus.proxyUrl}</div>
                     </div>
                   ) : (
                     <p className="text-xs text-ink-3">{t("instance.llm.proxyUnavailable")}</p>
                   )}
+                  <div>
+                    <label className="block text-xs text-ink-2 mb-1">{t("instance.llm.proxyAllowlistLabel")}</label>
+                    <textarea
+                      value={proxyAllowlist}
+                      onChange={(e) => setProxyAllowlist(e.target.value)}
+                      rows={2}
+                      placeholder={t("instance.llm.proxyAllowlistPlaceholder")}
+                      className="w-full bg-s2 border border-edge rounded-lg px-3 py-2 text-xs text-ink placeholder:text-ink-3 focus:border-brand"
+                    />
+                  </div>
                 </div>
               )}
               <div className="flex items-center gap-3 mt-6 pt-4 border-t border-edge">
@@ -803,12 +824,20 @@ interface ProviderEntry {
 interface ProxyStatus {
   available: boolean;
   proxyServiceActive: boolean;
+  httpProxyActive: boolean;
   instanceProxyEnabled: boolean;
   unitAvailable: boolean;
+  canEnable: boolean;
+  proxyScheme: string;
+  reason: string;
+  allowlist: string;
   proxyUrl: string;
+  proxyServiceUnit?: string;
   serviceUnit: string;
   configDir: string;
 }
+
+const DEFAULT_PROXY_ALLOWLIST = "auth.openai.com,api.openai.com";
 
 function detectPreset(name: string, baseUrl: string): string {
   for (const [key, p] of Object.entries(PROVIDER_PRESETS)) {
@@ -899,6 +928,7 @@ function LlmTab({ inst }: { inst: InstanceInfo }) {
   const [proxyStatus, setProxyStatus] = useState<ProxyStatus | null>(null);
   const [proxyLoading, setProxyLoading] = useState(false);
   const [proxyBusy, setProxyBusy] = useState(false);
+  const [proxyAllowlist, setProxyAllowlist] = useState(DEFAULT_PROXY_ALLOWLIST);
 
   const fetchQuota = async () => {
     setQuotaLoading(true);
@@ -935,8 +965,10 @@ function LlmTab({ inst }: { inst: InstanceInfo }) {
     try {
       const r = await get<ProxyStatus>(`/lifecycle/${inst.id}/proxy-status`);
       setProxyStatus(r || null);
+      setProxyAllowlist(r?.allowlist || DEFAULT_PROXY_ALLOWLIST);
     } catch {
       setProxyStatus(null);
+      setProxyAllowlist(DEFAULT_PROXY_ALLOWLIST);
     } finally {
       setProxyLoading(false);
     }
@@ -1612,8 +1644,9 @@ function LlmTab({ inst }: { inst: InstanceInfo }) {
                     onClick={async () => {
                       setProxyBusy(true);
                       try {
-                        const r = await post<any>(`/lifecycle/${inst.id}/proxy-route/enable`, {});
+                        const r = await post<ProxyStatus>(`/lifecycle/${inst.id}/proxy-route/enable`, { proxyAllowlist });
                         setProxyStatus(r);
+                        setProxyAllowlist(r.allowlist || "");
                         setMessage(t("instance.llm.proxyEnableSuccess"));
                         setTimeout(() => setMessage(null), 2500);
                       } catch (err: any) {
@@ -1622,7 +1655,7 @@ function LlmTab({ inst }: { inst: InstanceInfo }) {
                         setProxyBusy(false);
                       }
                     }}
-                    disabled={proxyBusy || proxyStatus?.instanceProxyEnabled}
+                    disabled={proxyBusy || proxyStatus?.instanceProxyEnabled || proxyStatus?.canEnable === false}
                     className="px-3 py-1.5 bg-brand hover:bg-brand-light rounded-lg text-xs font-medium disabled:opacity-50"
                   >
                     {proxyBusy ? t("instance.llm.proxyEnabling") : proxyStatus?.instanceProxyEnabled ? t("instance.llm.proxyEnabled") : t("instance.llm.proxyEnable")}
@@ -1644,12 +1677,29 @@ function LlmTab({ inst }: { inst: InstanceInfo }) {
                         {proxyStatus.instanceProxyEnabled ? t("instance.llm.proxyEnabled") : t("instance.llm.proxyNotEnabled")}
                       </span>
                     </div>
+                    <div className="text-ink-2">
+                      {t("instance.llm.proxySupportStatus")}:
+                      <span className={`ml-1 ${proxyStatus.canEnable ? "text-ok" : "text-danger"}`}>
+                        {proxyStatus.canEnable ? t("instance.llm.proxySupported") : t("instance.llm.proxyUnsupported")}
+                      </span>
+                    </div>
+                    <div className="text-ink-3">{proxyStatus.reason || "\u00A0"}</div>
                     <div className="text-ink-3 font-mono break-all">{proxyStatus.serviceUnit}</div>
                     <div className="text-ink-3 font-mono break-all">{proxyStatus.proxyUrl}</div>
                   </div>
                 ) : (
                   <p className="text-xs text-ink-3">{t("instance.llm.proxyUnavailable")}</p>
                 )}
+                <div>
+                  <label className="block text-xs text-ink-2 mb-1">{t("instance.llm.proxyAllowlistLabel")}</label>
+                  <textarea
+                    value={proxyAllowlist}
+                    onChange={(e) => setProxyAllowlist(e.target.value)}
+                    rows={2}
+                    placeholder={t("instance.llm.proxyAllowlistPlaceholder")}
+                    className="w-full bg-s2 border border-edge rounded-lg px-3 py-2 text-xs text-ink placeholder:text-ink-3 focus:border-brand"
+                  />
+                </div>
               </div>
             )}
 
@@ -3035,6 +3085,8 @@ function SkillsTab({ inst }: { inst: InstanceInfo }) {
   const [catalog, setCatalog] = useState<{ name: string; description: string; emoji?: string }[]>([]);
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [suspiciousSkills, setSuspiciousSkills] = useState<Set<string>>(new Set());
+  const [viewingSkill, setViewingSkill] = useState<{ skillName: string; path: string; content: string } | null>(null);
+  const [loadingSkill, setLoadingSkill] = useState<string | null>(null);
 
   useEffect(() => {
     get<{ templates: typeof templates }>("/skills/templates").then(r => setTemplates(r.templates || [])).catch(() => {});
@@ -3075,6 +3127,23 @@ function SkillsTab({ inst }: { inst: InstanceInfo }) {
     } catch (err: any) {
       alert(err.message);
     }
+  }
+
+  async function handleViewSkill(skillName: string) {
+    setLoadingSkill(skillName);
+    try {
+      const res = await get<{ path: string; content: string }>(
+        `/skills/content?instanceId=${encodeURIComponent(inst.id)}&name=${encodeURIComponent(skillName)}`,
+      );
+      setViewingSkill({ skillName, path: res.path, content: res.content });
+    } catch (err: any) {
+      setViewingSkill({
+        skillName,
+        path: "",
+        content: err?.message || "Failed to load skill content",
+      });
+    }
+    setLoadingSkill(null);
   }
 
   async function handleAddSkills(skillNames: string[]) {
@@ -3161,6 +3230,11 @@ function SkillsTab({ inst }: { inst: InstanceInfo }) {
                   </td>
                   <td className="px-4 py-2 text-xs text-ink-3">{sk.description || "\u2014"}</td>
                   <td className="px-4 py-2 text-right whitespace-nowrap">
+                    <button onClick={() => handleViewSkill(sk.name)}
+                      disabled={loadingSkill === sk.name}
+                      className="text-xs text-brand hover:text-brand/80 disabled:opacity-50 mr-3">
+                      {loadingSkill === sk.name ? "加载中" : "查看"}
+                    </button>
                     <button onClick={() => handleRemoveSkill(sk.name)}
                       className="text-xs text-danger hover:text-danger/80">
                       {t("common.delete")}
@@ -3195,6 +3269,29 @@ function SkillsTab({ inst }: { inst: InstanceInfo }) {
           onClose={() => setShowAddDialog(false)}
           t={t}
         />
+      )}
+
+      {viewingSkill && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-4xl max-h-[85vh] overflow-hidden rounded-xl border border-edge bg-s1 shadow-xl">
+            <div className="flex items-start justify-between gap-4 border-b border-edge px-4 py-3">
+              <div className="min-w-0">
+                <div className="text-sm font-medium text-ink">{viewingSkill.skillName}</div>
+                {viewingSkill.path && <div className="text-xs text-ink-3 mt-1 break-all">{viewingSkill.path}</div>}
+              </div>
+              <button
+                onClick={() => setViewingSkill(null)}
+                className="text-ink-3 hover:text-ink transition-colors"
+                title={t("common.close")}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="max-h-[calc(85vh-88px)] overflow-auto px-4 py-3">
+              <pre className="whitespace-pre-wrap break-words text-xs leading-6 text-ink">{viewingSkill.content}</pre>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
