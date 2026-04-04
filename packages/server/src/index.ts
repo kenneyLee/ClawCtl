@@ -2,6 +2,9 @@ import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { serveStatic } from "@hono/node-server/serve-static";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 import { InstanceManager } from "./instances/manager.js";
 import { LlmClient } from "./llm/client.js";
 import { initDb } from "./instances/store.js";
@@ -50,6 +53,17 @@ if (llmRow) {
 const app = new Hono();
 app.use("/api/*", cors({ origin: (origin) => origin || "*", credentials: true }));
 
+function resolveWebDistRoot(): string {
+  const cwdCandidate = path.resolve(process.cwd(), "packages/web/dist");
+  if (fs.existsSync(path.join(cwdCandidate, "index.html"))) return cwdCandidate;
+
+  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+  const moduleCandidate = path.resolve(moduleDir, "../web/dist");
+  if (fs.existsSync(path.join(moduleCandidate, "index.html"))) return moduleCandidate;
+
+  return cwdCandidate;
+}
+
 // Auth middleware — all /api/* routes except auth endpoints
 app.use("/api/*", authMiddleware(sessionSecret));
 
@@ -92,8 +106,8 @@ app.route("/api/assistant", assistantRoutes(hostStore, manager, llm, db));
 // Skills — catalog, templates, install/uninstall
 app.route("/api/skills", skillRoutes(db, manager, hostStore));
 
-// Serve frontend in production
-app.use("/*", serveStatic({ root: "../web/dist" }));
+// Serve frontend assets
+app.use("/*", serveStatic({ root: resolveWebDistRoot() }));
 
 const port = parseInt(process.env.CLAWCTL_PORT || "7100");
 
