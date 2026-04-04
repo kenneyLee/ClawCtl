@@ -660,6 +660,8 @@ function InstalledSkillsView({ instances, catalog, t }: {
 }) {
   const [uninstalling, setUninstalling] = useState<string | null>(null);
   const [suspiciousSkills, setSuspiciousSkills] = useState<Set<string>>(new Set());
+  const [viewingSkill, setViewingSkill] = useState<{ instanceLabel: string; skillName: string; path: string; content: string } | null>(null);
+  const [loadingSkill, setLoadingSkill] = useState<string | null>(null);
 
   const connected = instances.filter((inst) => inst.connection.status === "connected");
   const bundledNames = useMemo(() => new Set(catalog.map((c) => c.name)), [catalog]);
@@ -709,19 +711,39 @@ function InstalledSkillsView({ instances, catalog, t }: {
     setUninstalling(null);
   };
 
+  const handleView = async (instanceId: string, instanceLabel: string, skillName: string) => {
+    setLoadingSkill(`${instanceId}:${skillName}`);
+    try {
+      const res = await get<{ path: string; content: string }>(
+        `/skills/content?instanceId=${encodeURIComponent(instanceId)}&name=${encodeURIComponent(skillName)}`,
+      );
+      setViewingSkill({ instanceLabel, skillName, path: res.path, content: res.content });
+    } catch (err) {
+      setViewingSkill({
+        instanceLabel,
+        skillName,
+        path: "",
+        content: err instanceof Error ? err.message : "Failed to load skill content",
+      });
+    }
+    setLoadingSkill(null);
+  };
+
   if (connected.length === 0) {
     return <div className="text-sm text-ink-3 py-8 text-center">{t("skills.noInstances")}</div>;
   }
 
   return (
+    <>
     <div className="space-y-4">
       {connected.map((inst) => {
         const instSkills = (inst.skills || []).filter(sk => sk.status !== "missing");
         const agentIds = inst.agents.map((a) => a.id);
+        const instanceLabel = inst.connection.label || inst.id;
         return (
           <div key={inst.id} className="border border-edge rounded-lg overflow-hidden">
             <div className="flex items-center justify-between px-4 py-2.5 bg-s2/50 border-b border-edge">
-              <span className="text-sm font-medium text-ink">{inst.connection.label || inst.id}</span>
+              <span className="text-sm font-medium text-ink">{instanceLabel}</span>
               <span className="text-xs text-ink-3">{t("skills.skillCount", { count: instSkills.length })}</span>
             </div>
             {instSkills.length === 0 ? (
@@ -732,10 +754,18 @@ function InstalledSkillsView({ instances, catalog, t }: {
                   const isClawhub = !bundledNames.has(sk.name);
                   const isSuspicious = suspiciousSkills.has(sk.name);
                   const isUninstalling = uninstalling === `${inst.id}:${sk.name}`;
+                  const isLoading = loadingSkill === `${inst.id}:${sk.name}`;
                   return (
                     <div key={sk.name} className="flex items-center gap-3 px-4 py-2.5">
                       <span className={`w-2 h-2 rounded-full shrink-0 ${sk.status === "ready" ? "bg-ok" : sk.status === "disabled" ? "bg-ink-3" : "bg-amber-500"}`} />
-                      <span className="text-sm text-ink flex-1">{sk.name}</span>
+                      <button
+                        onClick={() => handleView(inst.id, instanceLabel, sk.name)}
+                        disabled={isLoading}
+                        className="text-sm text-ink flex-1 text-left hover:text-brand transition-colors disabled:opacity-50"
+                        title={isLoading ? "Loading..." : "View skill content"}
+                      >
+                        {sk.name}
+                      </button>
                       {isClawhub && (
                         <span className="text-xs px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500 whitespace-nowrap">{t("skills.community")}</span>
                       )}
@@ -762,6 +792,30 @@ function InstalledSkillsView({ instances, catalog, t }: {
         );
       })}
     </div>
+    {viewingSkill && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <div className="w-full max-w-4xl max-h-[85vh] overflow-hidden rounded-xl border border-edge bg-s1 shadow-xl">
+          <div className="flex items-start justify-between gap-4 border-b border-edge px-4 py-3">
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-ink">{viewingSkill.skillName}</div>
+              <div className="text-xs text-ink-3">{viewingSkill.instanceLabel}</div>
+              {viewingSkill.path && <div className="text-xs text-ink-3 mt-1 break-all">{viewingSkill.path}</div>}
+            </div>
+            <button
+              onClick={() => setViewingSkill(null)}
+              className="text-ink-3 hover:text-ink transition-colors"
+              title={t("common.close")}
+            >
+              <X size={16} />
+            </button>
+          </div>
+          <div className="max-h-[calc(85vh-88px)] overflow-auto px-4 py-3">
+            <pre className="whitespace-pre-wrap break-words text-xs leading-6 text-ink">{viewingSkill.content}</pre>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
 

@@ -1,8 +1,10 @@
 import { Hono } from "hono";
 import type Database from "better-sqlite3";
+import fs from "fs/promises";
+import path from "path";
 import type { InstanceManager } from "../instances/manager.js";
 import type { HostStore } from "../hosts/store.js";
-import { getHostExecutor } from "../executor/factory.js";
+import { getExecutor, getHostExecutor } from "../executor/factory.js";
 import { requireWrite } from "../auth/middleware.js";
 import { auditLog } from "../audit.js";
 import {
@@ -31,6 +33,20 @@ interface TemplateRow {
 
 export function skillRoutes(db: Database.Database, manager: InstanceManager, hostStore?: HostStore) {
   const app = new Hono();
+
+  function resolveSkillContentCandidates(configDir: string, skillName: string): string[] {
+    const normalized = configDir.replace(/\/+$/, "");
+    const baseDirs = [
+      normalized,
+      normalized.endsWith("/.openclaw") ? path.dirname(normalized) : normalized,
+    ];
+    const out = new Set<string>();
+    for (const dir of baseDirs) {
+      out.add(path.join(dir, "workspace", "skills", skillName, "SKILL.md"));
+      out.add(path.join(dir, "skills", skillName, "SKILL.md"));
+    }
+    return [...out];
+  }
 
   // ─── Read-only endpoints (any authenticated user) ───
 
@@ -87,6 +103,56 @@ export function skillRoutes(db: Database.Database, manager: InstanceManager, hos
       skills: JSON.parse(r.skills),
     }));
     return c.json({ templates });
+  });
+
+  // GET /content?instanceId=...&name=... — fetch installed skill markdown content
+  app.get("/content", async (c) => {
+    const instanceId = c.req.query("instanceId") || "";
+    const skillName = c.req.query("name") || "";
+    if (!instanceId || !skillName) {
+      return c.json({ error: "instanceId and name are required" }, 400);
+    }
+
+    const inst = manager.get(instanceId);
+    if (!inst) return c.json({ error: "Instance not found" }, 404);
+    const configDir = inst.connection.configDir;
+    if (!configDir) return c.json({ error: "Instance config directory not available" }, 404);
+
+    const candidates = resolveSkillContentCandidates(configDir, skillName);
+    if (instanceId.startsWith("local-")) {
+      for (const candidate of candidates) {
+        try {
+          const content = await fs.readFile(candidate, "utf8");
+          return c.json({ path: candidate, content });
+        } catch { /* continue */ }
+      }
+      return c.json({ error: "Skill content not found" }, 404);
+    }
+
+    if (!hostStore) return c.json({ error: "Remote host store not configured" }, 500);
+    const executor = getExecutor(instanceId, hostStore);
+    const encoded = Buffer.from(JSON.stringify(candidates), "utf8").toString("base64");
+    const res = await executor.exec(
+      `python3 - <<'PY'
+import base64, json, pathlib, sys
+candidates = json.loads(base64.b64decode("${encoded}").decode("utf-8"))
+for raw in candidates:
+    p = pathlib.Path(raw)
+    if p.is_file():
+        sys.stdout.write(json.dumps({"path": str(p), "content": p.read_text(encoding="utf-8", errors="ignore")}))
+        raise SystemExit(0)
+raise SystemExit(2)
+PY`,
+      { timeout: 30_000 },
+    );
+    if (res.exitCode !== 0 || !res.stdout.trim()) {
+      return c.json({ error: "Skill content not found" }, 404);
+    }
+    try {
+      return c.json(JSON.parse(res.stdout));
+    } catch {
+      return c.json({ error: "Failed to parse skill content" }, 500);
+    }
   });
 
   // ─── Write endpoints (require skills write permission) ───
