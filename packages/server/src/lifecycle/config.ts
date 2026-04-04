@@ -8,6 +8,34 @@ export function resolveConfigDir(instance: { connection?: { configDir?: string }
   return instance.connection?.configDir || getConfigDir(fallbackProfile);
 }
 
+export function resolveWorkspaceRoot(configDir: string): string {
+  return configDir.endsWith("/.openclaw")
+    ? configDir.slice(0, -"/.openclaw".length)
+    : configDir;
+}
+
+export function inferServiceUnitName(instanceId: string, configDir: string, fallbackProfile: string): string {
+  const workspaceRoot = resolveWorkspaceRoot(configDir);
+  const workspaceName = workspaceRoot.split("/").filter(Boolean).pop() || "";
+  const configName = configDir.split("/").filter(Boolean).pop() || "";
+
+  if (workspaceName.startsWith("family-")) {
+    return `openclaw-${workspaceName}`;
+  }
+
+  if (configName === ".openclaw") {
+    return "openclaw-gateway";
+  }
+
+  if (configName.startsWith(".openclaw-")) {
+    return `openclaw-gateway-${configName.slice(".openclaw-".length)}`;
+  }
+
+  const parts = instanceId.split("-");
+  const suffix = parts[parts.length - 1] || fallbackProfile;
+  return suffix === "default" ? "openclaw-gateway" : `openclaw-gateway-${suffix}`;
+}
+
 /** Extract profile name from instance ID (e.g. "ssh-1-feishu" → "feishu") */
 export function profileFromInstanceId(instanceId: string): string {
   const parts = instanceId.split("-");
@@ -30,9 +58,7 @@ export async function readSoulMarkdown(
   exec: CommandExecutor,
   configDir: string,
 ): Promise<{ exists: boolean; path: string; content: string }> {
-  const workspaceRoot = configDir.endsWith("/.openclaw")
-    ? configDir.slice(0, -"/.openclaw".length)
-    : configDir;
+  const workspaceRoot = resolveWorkspaceRoot(configDir);
   const path = `${workspaceRoot}/workspace/SOUL.md`;
   const r = await exec.exec(`if [ -f "${path}" ]; then cat "${path}"; else exit 2; fi`);
   if (r.exitCode === 0) return { exists: true, path, content: r.stdout };

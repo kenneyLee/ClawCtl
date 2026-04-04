@@ -416,6 +416,9 @@ function AgentsTab({ inst, initialAgentId, onSwitchTab }: { inst: InstanceInfo; 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [hasProvider, setHasProvider] = useState(true); // optimistic default
+  const [proxyStatus, setProxyStatus] = useState<ProxyStatus | null>(null);
+  const [proxyLoading, setProxyLoading] = useState(false);
+  const [proxyBusy, setProxyBusy] = useState(false);
 
   const fetchData = async () => {
     setLoading(true);
@@ -455,9 +458,27 @@ function AgentsTab({ inst, initialAgentId, onSwitchTab }: { inst: InstanceInfo; 
     setLoading(false);
   };
 
-  useEffect(() => { fetchData(); }, [inst.id]);
+  const fetchProxyStatus = useCallback(async () => {
+    if (!inst.id.startsWith("ssh-")) {
+      setProxyStatus(null);
+      return;
+    }
+    setProxyLoading(true);
+    try {
+      const r = await get<ProxyStatus>(`/lifecycle/${inst.id}/proxy-status`);
+      setProxyStatus(r || null);
+    } catch {
+      setProxyStatus(null);
+    } finally {
+      setProxyLoading(false);
+    }
+  }, [inst.id]);
+
+  useEffect(() => { fetchData(); fetchProxyStatus(); }, [inst.id, fetchProxyStatus]);
 
   const selected = agents.find((a) => a.id === selectedId) || null;
+  const selectedModelRef = selected?.model || defaultModel;
+  const showOpenAIModelProxyCard = inst.id.startsWith("ssh-") && isOpenAIModelRef(selectedModelRef);
 
   const updateAgent = (values: AgentFormValues) => {
     setAgents((prev) => prev.map((a) => a.id === selectedId ? values : a));
@@ -631,6 +652,56 @@ function AgentsTab({ inst, initialAgentId, onSwitchTab }: { inst: InstanceInfo; 
                 isNew={isNew}
                 onApplyTemplate={() => setShowTemplateModal(true)}
               />
+              {showOpenAIModelProxyCard && (
+                <div className="mt-4 p-3 bg-s2/50 border border-edge rounded-lg space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm text-ink">{t("instance.llm.proxyRouteTitle")}</p>
+                      <p className="text-xs text-ink-3">{t("instance.llm.agentProxyRouteDesc")}</p>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        setProxyBusy(true);
+                        try {
+                          const r = await post<ProxyStatus>(`/lifecycle/${inst.id}/proxy-route/enable`, {});
+                          setProxyStatus(r);
+                          setError("");
+                        } catch (e: any) {
+                          setError(e.message);
+                        } finally {
+                          setProxyBusy(false);
+                        }
+                      }}
+                      disabled={proxyBusy || proxyStatus?.instanceProxyEnabled}
+                      className="px-3 py-1.5 bg-brand hover:bg-brand-light rounded-lg text-xs font-medium disabled:opacity-50"
+                    >
+                      {proxyBusy ? t("instance.llm.proxyEnabling") : proxyStatus?.instanceProxyEnabled ? t("instance.llm.proxyEnabled") : t("instance.llm.proxyEnable")}
+                    </button>
+                  </div>
+                  {proxyLoading ? (
+                    <p className="text-xs text-ink-3">{t("instance.llm.proxyLoading")}</p>
+                  ) : proxyStatus ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                      <div className="text-ink-2">
+                        {t("instance.llm.proxyTunnelStatus")}:
+                        <span className={`ml-1 ${proxyStatus.proxyServiceActive ? "text-ok" : "text-danger"}`}>
+                          {proxyStatus.proxyServiceActive ? t("instance.llm.proxyTunnelActive") : t("instance.llm.proxyTunnelInactive")}
+                        </span>
+                      </div>
+                      <div className="text-ink-2">
+                        {t("instance.llm.proxyInstanceStatus")}:
+                        <span className={`ml-1 ${proxyStatus.instanceProxyEnabled ? "text-ok" : "text-warn"}`}>
+                          {proxyStatus.instanceProxyEnabled ? t("instance.llm.proxyEnabled") : t("instance.llm.proxyNotEnabled")}
+                        </span>
+                      </div>
+                      <div className="text-ink-3 font-mono break-all">{proxyStatus.serviceUnit}</div>
+                      <div className="text-ink-3 font-mono break-all">{proxyStatus.proxyUrl}</div>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-ink-3">{t("instance.llm.proxyUnavailable")}</p>
+                  )}
+                </div>
+              )}
               <div className="flex items-center gap-3 mt-6 pt-4 border-t border-edge">
                 <button
                   onClick={saveAll}
@@ -729,6 +800,16 @@ interface ProviderEntry {
   models: any[];
 }
 
+interface ProxyStatus {
+  available: boolean;
+  proxyServiceActive: boolean;
+  instanceProxyEnabled: boolean;
+  unitAvailable: boolean;
+  proxyUrl: string;
+  serviceUnit: string;
+  configDir: string;
+}
+
 function detectPreset(name: string, baseUrl: string): string {
   for (const [key, p] of Object.entries(PROVIDER_PRESETS)) {
     if (key === "custom") continue;
@@ -751,6 +832,14 @@ function formatTimeUntil(epochMs: number): string {
   if (hours < 1) return `${Math.floor(diff / 60_000)}m`;
   if (hours < 24) return `${hours}h`;
   return `${Math.floor(hours / 24)}d`;
+}
+
+function isOpenAIModelRef(model: string): boolean {
+  const lower = model.trim().toLowerCase();
+  if (!lower) return false;
+  return lower.startsWith("openai/")
+    || lower.startsWith("openai-codex/")
+    || lower.startsWith("gpt-");
 }
 
 function formatTimeAgo(isoDate: string, t: (k: string, o?: any) => string): string {
@@ -807,6 +896,9 @@ function LlmTab({ inst }: { inst: InstanceInfo }) {
   const [addKeyError, setAddKeyError] = useState<string | null>(null);
   const [addingKey, setAddingKey] = useState(false);
   const [providerUsage, setProviderUsage] = useState<Record<string, { tokens: number; cost: number }>>({});
+  const [proxyStatus, setProxyStatus] = useState<ProxyStatus | null>(null);
+  const [proxyLoading, setProxyLoading] = useState(false);
+  const [proxyBusy, setProxyBusy] = useState(false);
 
   const fetchQuota = async () => {
     setQuotaLoading(true);
@@ -834,7 +926,23 @@ function LlmTab({ inst }: { inst: InstanceInfo }) {
     }
   };
 
-  useEffect(() => { fetchProviders(); fetchQuota(); }, [inst.id]);
+  const fetchProxyStatus = useCallback(async () => {
+    if (!inst.id.startsWith("ssh-")) {
+      setProxyStatus(null);
+      return;
+    }
+    setProxyLoading(true);
+    try {
+      const r = await get<ProxyStatus>(`/lifecycle/${inst.id}/proxy-status`);
+      setProxyStatus(r || null);
+    } catch {
+      setProxyStatus(null);
+    } finally {
+      setProxyLoading(false);
+    }
+  }, [inst.id]);
+
+  useEffect(() => { fetchProviders(); fetchQuota(); fetchProxyStatus(); }, [inst.id, fetchProxyStatus]);
 
   // Compute per-provider usage from existing cost estimate data
   useEffect(() => {
@@ -1069,6 +1177,8 @@ function LlmTab({ inst }: { inst: InstanceInfo }) {
     setEditing(null);
     setEditOrigName(null);
   };
+
+  const showOpenAIProxyCard = !!editing && editing.preset === "openai" && inst.id.startsWith("ssh-");
 
   const deleteProvider = async (name: string) => {
     const next = { ...providers };
@@ -1488,6 +1598,58 @@ function LlmTab({ inst }: { inst: InstanceInfo }) {
                   <option value="apikey">{t("instance.llm.apiKeyOption")}</option>
                   <option value="oauth">{t("instance.llm.oauthOption")}</option>
                 </select>
+              </div>
+            )}
+
+            {showOpenAIProxyCard && (
+              <div className="p-3 bg-s2/50 border border-edge rounded-lg space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm text-ink">{t("instance.llm.proxyRouteTitle")}</p>
+                    <p className="text-xs text-ink-3">{t("instance.llm.proxyRouteDesc")}</p>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      setProxyBusy(true);
+                      try {
+                        const r = await post<any>(`/lifecycle/${inst.id}/proxy-route/enable`, {});
+                        setProxyStatus(r);
+                        setMessage(t("instance.llm.proxyEnableSuccess"));
+                        setTimeout(() => setMessage(null), 2500);
+                      } catch (err: any) {
+                        setMessage(`${t("common.error")}: ${err.message}`);
+                      } finally {
+                        setProxyBusy(false);
+                      }
+                    }}
+                    disabled={proxyBusy || proxyStatus?.instanceProxyEnabled}
+                    className="px-3 py-1.5 bg-brand hover:bg-brand-light rounded-lg text-xs font-medium disabled:opacity-50"
+                  >
+                    {proxyBusy ? t("instance.llm.proxyEnabling") : proxyStatus?.instanceProxyEnabled ? t("instance.llm.proxyEnabled") : t("instance.llm.proxyEnable")}
+                  </button>
+                </div>
+                {proxyLoading ? (
+                  <p className="text-xs text-ink-3">{t("instance.llm.proxyLoading")}</p>
+                ) : proxyStatus ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                    <div className="text-ink-2">
+                      {t("instance.llm.proxyTunnelStatus")}:
+                      <span className={`ml-1 ${proxyStatus.proxyServiceActive ? "text-ok" : "text-danger"}`}>
+                        {proxyStatus.proxyServiceActive ? t("instance.llm.proxyTunnelActive") : t("instance.llm.proxyTunnelInactive")}
+                      </span>
+                    </div>
+                    <div className="text-ink-2">
+                      {t("instance.llm.proxyInstanceStatus")}:
+                      <span className={`ml-1 ${proxyStatus.instanceProxyEnabled ? "text-ok" : "text-warn"}`}>
+                        {proxyStatus.instanceProxyEnabled ? t("instance.llm.proxyEnabled") : t("instance.llm.proxyNotEnabled")}
+                      </span>
+                    </div>
+                    <div className="text-ink-3 font-mono break-all">{proxyStatus.serviceUnit}</div>
+                    <div className="text-ink-3 font-mono break-all">{proxyStatus.proxyUrl}</div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-ink-3">{t("instance.llm.proxyUnavailable")}</p>
+                )}
               </div>
             )}
 

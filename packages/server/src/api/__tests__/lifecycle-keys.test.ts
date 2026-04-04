@@ -44,6 +44,14 @@ vi.mock("../../lifecycle/config.js", () => ({
   getConfigDir: vi.fn((profile: string) =>
     profile === "default" ? "$HOME/.openclaw" : `$HOME/.openclaw-${profile}`
   ),
+  resolveConfigDir: vi.fn((inst: any, profile: string) =>
+    inst?.connection?.configDir || (profile === "default" ? "$HOME/.openclaw" : `$HOME/.openclaw-${profile}`)
+  ),
+  inferServiceUnitName: vi.fn((id: string, configDir: string, profile: string) => {
+    if (configDir.endsWith("/.openclaw")) return "openclaw-gateway";
+    if (configDir.includes("/family-")) return `openclaw-${configDir.split("/").filter(Boolean).slice(-2, -1)[0]}`;
+    return profile === "default" ? "openclaw-gateway" : `openclaw-gateway-${profile}`;
+  }),
   profileFromInstanceId: vi.fn((id: string) => {
     const parts = id.split("-");
     return parts[parts.length - 1];

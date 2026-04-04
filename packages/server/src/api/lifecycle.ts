@@ -3,12 +3,13 @@ import { stream } from "hono/streaming";
 import type Database from "better-sqlite3";
 import type { HostStore } from "../hosts/store.js";
 import type { InstanceManager } from "../instances/manager.js";
+import type { CommandExecutor } from "../executor/types.js";
 import { requireWrite } from "../auth/middleware.js";
 import { auditLog } from "../audit.js";
 import { getExecutor, getHostExecutor } from "../executor/factory.js";
 import { getProcessStatus, stopProcess, startProcess, restartProcess } from "../lifecycle/service.js";
 import { checkNodeVersion, getVersions, streamInstall, streamUninstall, streamChannelCreate } from "../lifecycle/install.js";
-import { readRemoteConfig, writeRemoteConfig, readSoulMarkdown, readAuthProfiles, writeAuthProfiles, deleteAuthProfile, getConfigDir, profileFromInstanceId, resolveConfigDir } from "../lifecycle/config.js";
+import { readRemoteConfig, writeRemoteConfig, readSoulMarkdown, readAuthProfiles, writeAuthProfiles, deleteAuthProfile, getConfigDir, profileFromInstanceId, resolveConfigDir, inferServiceUnitName } from "../lifecycle/config.js";
 import { verifyProviderKey, maskKey } from "../lifecycle/verify.js";
 import { SnapshotStore } from "../lifecycle/snapshot.js";
 import { extractModels, mergeAgentConfig, removeAgent } from "../lifecycle/agent-config.js";
@@ -19,6 +20,48 @@ import { fetchCodexQuota, getApiKeyFetcher } from "../pricing/codex-quota.js";
 
 const VERSION_CACHE_TTL = 60_000; // 60s
 const versionCache = new Map<string, { data: any; time: number }>();
+const XDG = `export XDG_RUNTIME_DIR=/run/user/$(id -u) 2>/dev/null; `;
+const PROXY_URL = "socks5h://127.0.0.1:1080";
+
+async function readProxyStatus(exec: CommandExecutor, unit: string) {
+  const script = `${XDG}
+proxy_active="false"
+if systemctl --user is-active socks-proxy.service >/dev/null 2>&1 || systemctl --user is-active ssh-socks-proxy.service >/dev/null 2>&1; then
+  proxy_active="true"
+fi
+proxy_enabled="false"
+unit_state="$(systemctl --user is-enabled ${unit}.service 2>/dev/null || true)"
+unit_available="false"
+case "$unit_state" in
+  enabled|static|linked|disabled|indirect|generated|transient)
+    unit_available="true"
+    ;;
+esac
+if systemctl --user show ${unit}.service -p Environment --value 2>/dev/null | grep -q 'ALL_PROXY=${PROXY_URL}'; then
+  proxy_enabled="true"
+fi
+printf '{"proxyServiceActive":%s,"instanceProxyEnabled":%s,"unitAvailable":%s}' "$proxy_active" "$proxy_enabled" "$unit_available"
+`;
+  const r = await exec.exec(script);
+  if (r.exitCode !== 0) throw new Error(r.stderr || "Failed to read proxy status");
+  return JSON.parse(r.stdout.trim());
+}
+
+async function enableProxyRoute(exec: CommandExecutor, unit: string) {
+  const script = `${XDG}
+mkdir -p "$HOME/.config/systemd/user/${unit}.service.d"
+cat > "$HOME/.config/systemd/user/${unit}.service.d/proxy.conf" <<'CLAWCTL_EOF'
+[Service]
+Environment=ALL_PROXY=${PROXY_URL}
+Environment=HTTP_PROXY=${PROXY_URL}
+Environment=HTTPS_PROXY=${PROXY_URL}
+CLAWCTL_EOF
+systemctl --user daemon-reload
+systemctl --user restart ${unit}.service
+`;
+  const r = await exec.exec(script);
+  if (r.exitCode !== 0) throw new Error(r.stderr || "Failed to enable proxy route");
+}
 
 export function lifecycleRoutes(hostStore: HostStore, manager: InstanceManager, db: Database.Database) {
   const app = new Hono();
@@ -230,6 +273,53 @@ export function lifecycleRoutes(hostStore: HostStore, manager: InstanceManager, 
       return c.json(soul);
     } catch (err: any) {
       return c.json({ error: `Failed to read SOUL.md: ${err.message}` }, 500);
+    }
+  });
+
+  app.get("/:id/proxy-status", async (c) => {
+    const id = c.req.param("id");
+    const inst = manager.get(id);
+    if (!inst) return c.json({ error: "instance not found" }, 404);
+    const profile = profileFromInstanceId(id);
+    const configDir = resolveConfigDir(inst, profile);
+    const unit = inferServiceUnitName(id, configDir, profile);
+    const exec = getExecutor(id, hostStore);
+    try {
+      const status = await readProxyStatus(exec, unit);
+      return c.json({
+        available: true,
+        proxyUrl: PROXY_URL,
+        serviceUnit: `${unit}.service`,
+        configDir,
+        ...status,
+      });
+    } catch (err: any) {
+      return c.json({ error: `Failed to read proxy status: ${err.message}` }, 500);
+    }
+  });
+
+  app.post("/:id/proxy-route/enable", async (c) => {
+    const id = c.req.param("id");
+    const inst = manager.get(id);
+    if (!inst) return c.json({ error: "instance not found" }, 404);
+    const profile = profileFromInstanceId(id);
+    const configDir = resolveConfigDir(inst, profile);
+    const unit = inferServiceUnitName(id, configDir, profile);
+    const exec = getExecutor(id, hostStore);
+    try {
+      await enableProxyRoute(exec, unit);
+      const status = await readProxyStatus(exec, unit);
+      auditLog(db, c, "lifecycle.proxy-enable", `Enabled proxy route for ${unit}.service`, id);
+      return c.json({
+        ok: true,
+        proxyUrl: PROXY_URL,
+        serviceUnit: `${unit}.service`,
+        configDir,
+        ...status,
+      });
+    } catch (err: any) {
+      auditLog(db, c, "lifecycle.proxy-enable", `FAILED for ${unit}.service: ${err.message}`, id);
+      return c.json({ error: err.message }, 500);
     }
   });
 
