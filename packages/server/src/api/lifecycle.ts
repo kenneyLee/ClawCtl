@@ -254,9 +254,10 @@ export function lifecycleRoutes(hostStore: HostStore, manager: InstanceManager, 
 
   app.get("/:id/models", async (c) => {
     const id = c.req.param("id");
-    if (!manager.get(id)) return c.json({ error: "instance not found" }, 404);
+    const inst = manager.get(id);
+    if (!inst) return c.json({ error: "instance not found" }, 404);
     const profile = profileFromInstanceId(id);
-    const configDir = getConfigDir(profile);
+    const configDir = resolveConfigDir(inst, profile);
     const exec = getExecutor(id, hostStore);
     const config = await readRemoteConfig(exec, configDir);
     return c.json(extractModels(config));
@@ -264,9 +265,10 @@ export function lifecycleRoutes(hostStore: HostStore, manager: InstanceManager, 
 
   app.put("/:id/agents", async (c) => {
     const id = c.req.param("id");
-    if (!manager.get(id)) return c.json({ error: "instance not found" }, 404);
+    const inst = manager.get(id);
+    if (!inst) return c.json({ error: "instance not found" }, 404);
     const profile = profileFromInstanceId(id);
-    const configDir = getConfigDir(profile);
+    const configDir = resolveConfigDir(inst, profile);
     const exec = getExecutor(id, hostStore);
     const payload = await c.req.json();
     try {
@@ -284,9 +286,10 @@ export function lifecycleRoutes(hostStore: HostStore, manager: InstanceManager, 
 
   app.delete("/:id/agents/:agentId", async (c) => {
     const id = c.req.param("id");
-    if (!manager.get(id)) return c.json({ error: "instance not found" }, 404);
+    const inst = manager.get(id);
+    if (!inst) return c.json({ error: "instance not found" }, 404);
     const profile = profileFromInstanceId(id);
-    const configDir = getConfigDir(profile);
+    const configDir = resolveConfigDir(inst, profile);
     const exec = getExecutor(id, hostStore);
     const config = await readRemoteConfig(exec, configDir);
     const agentId = c.req.param("agentId");
@@ -445,9 +448,10 @@ export function lifecycleRoutes(hostStore: HostStore, manager: InstanceManager, 
 
   app.get("/:id/providers", async (c) => {
     const id = c.req.param("id");
-    if (!manager.get(id)) return c.json({ error: "instance not found" }, 404);
+    const inst = manager.get(id);
+    if (!inst) return c.json({ error: "instance not found" }, 404);
     const profile = profileFromInstanceId(id);
-    const configDir = getConfigDir(profile);
+    const configDir = resolveConfigDir(inst, profile);
     const exec = getExecutor(id, hostStore);
     try {
       const config = await readRemoteConfig(exec, configDir);
@@ -505,9 +509,10 @@ export function lifecycleRoutes(hostStore: HostStore, manager: InstanceManager, 
 
   app.put("/:id/providers", async (c) => {
     const id = c.req.param("id");
-    if (!manager.get(id)) return c.json({ error: "instance not found" }, 404);
+    const inst = manager.get(id);
+    if (!inst) return c.json({ error: "instance not found" }, 404);
     const profile = profileFromInstanceId(id);
-    const configDir = getConfigDir(profile);
+    const configDir = resolveConfigDir(inst, profile);
     const exec = getExecutor(id, hostStore);
     const { providers } = await c.req.json<{ providers: Record<string, any> }>();
     try {
@@ -628,9 +633,10 @@ export function lifecycleRoutes(hostStore: HostStore, manager: InstanceManager, 
   // --- Key management endpoints ---
   app.get("/:id/keys", async (c) => {
     const id = c.req.param("id");
-    if (!manager.get(id)) return c.json({ error: "instance not found" }, 404);
+    const inst = manager.get(id);
+    if (!inst) return c.json({ error: "instance not found" }, 404);
     const profile = profileFromInstanceId(id);
-    const configDir = getConfigDir(profile);
+    const configDir = resolveConfigDir(inst, profile);
     const exec = getExecutor(id, hostStore);
     try {
       const config = await readRemoteConfig(exec, configDir);
@@ -685,9 +691,10 @@ export function lifecycleRoutes(hostStore: HostStore, manager: InstanceManager, 
 
   app.post("/:id/keys/refresh", async (c) => {
     const id = c.req.param("id");
-    if (!manager.get(id)) return c.json({ error: "instance not found" }, 404);
+    const inst = manager.get(id);
+    if (!inst) return c.json({ error: "instance not found" }, 404);
     const profile = profileFromInstanceId(id);
-    const configDir = getConfigDir(profile);
+    const configDir = resolveConfigDir(inst, profile);
     const exec = getExecutor(id, hostStore);
     try {
       const config = await readRemoteConfig(exec, configDir);
@@ -744,9 +751,10 @@ export function lifecycleRoutes(hostStore: HostStore, manager: InstanceManager, 
   app.post("/:id/keys/:profileId/verify", async (c) => {
     const id = c.req.param("id");
     const profileId = c.req.param("profileId");
-    if (!manager.get(id)) return c.json({ error: "instance not found" }, 404);
+    const inst = manager.get(id);
+    if (!inst) return c.json({ error: "instance not found" }, 404);
     const profile = profileFromInstanceId(id);
-    const configDir = getConfigDir(profile);
+    const configDir = resolveConfigDir(inst, profile);
     const exec = getExecutor(id, hostStore);
     try {
       const config = await readRemoteConfig(exec, configDir);
@@ -786,12 +794,13 @@ export function lifecycleRoutes(hostStore: HostStore, manager: InstanceManager, 
   // Set key priority order for a provider (first = preferred)
   app.put("/:id/keys/order", async (c) => {
     const id = c.req.param("id");
-    if (!manager.get(id)) return c.json({ error: "instance not found" }, 404);
+    const inst = manager.get(id);
+    if (!inst) return c.json({ error: "instance not found" }, 404);
     const { provider, order: newOrder } = await c.req.json<{ provider: string; order: string[] }>();
     if (!provider || !Array.isArray(newOrder)) return c.json({ error: "provider and order[] required" }, 400);
 
     const profile = profileFromInstanceId(id);
-    const configDir = getConfigDir(profile);
+    const configDir = resolveConfigDir(inst, profile);
     const exec = getExecutor(id, hostStore);
     try {
       const config = await readRemoteConfig(exec, configDir);
@@ -816,9 +825,10 @@ export function lifecycleRoutes(hostStore: HostStore, manager: InstanceManager, 
   app.delete("/:id/keys/:profileId", async (c) => {
     const id = c.req.param("id");
     const profileId = c.req.param("profileId");
-    if (!manager.get(id)) return c.json({ error: "instance not found" }, 404);
+    const inst = manager.get(id);
+    if (!inst) return c.json({ error: "instance not found" }, 404);
     const profile = profileFromInstanceId(id);
-    const configDir = getConfigDir(profile);
+    const configDir = resolveConfigDir(inst, profile);
     const exec = getExecutor(id, hostStore);
     try {
       const config = await readRemoteConfig(exec, configDir);
@@ -843,13 +853,14 @@ export function lifecycleRoutes(hostStore: HostStore, manager: InstanceManager, 
   // (Reuses global OAuth flow from /settings/oauth/openai/*)
   app.post("/:id/providers/oauth/save", async (c) => {
     const id = c.req.param("id");
-    if (!manager.get(id)) return c.json({ error: "instance not found" }, 404);
+    const inst = manager.get(id);
+    if (!inst) return c.json({ error: "instance not found" }, 404);
     const status = getOAuthStatus();
     if (status.status !== "complete" || !status.credentials) {
       return c.json({ error: "No completed OAuth credentials" }, 400);
     }
     const profile = profileFromInstanceId(id);
-    const configDir = getConfigDir(profile);
+    const configDir = resolveConfigDir(inst, profile);
     const exec = getExecutor(id, hostStore);
     try {
       // OpenClaw reads API keys from auth-profiles.json, NOT from openclaw.json.
@@ -894,7 +905,7 @@ export function lifecycleRoutes(hostStore: HostStore, manager: InstanceManager, 
     try { body = await c.req.json(); } catch {}
 
     const sourceProfile = profileFromInstanceId(sourceId);
-    const sourceConfigDir = getConfigDir(sourceProfile);
+    const sourceConfigDir = resolveConfigDir(sourceInst, sourceProfile);
     const sourceExec = getExecutor(sourceId, hostStore);
 
     // 1. Read all keys from source instance
