@@ -220,7 +220,8 @@ export function lifecycleRoutes(hostStore: HostStore, manager: InstanceManager, 
     if (!inst) return c.json({ error: "instance not found" }, 404);
     try {
       const exec = getExecutor(id, hostStore);
-      const configDir = await resolveConfigDir(id, manager, hostStore);
+      const profile = profileFromInstanceId(id);
+      const configDir = resolveConfigDir(inst, profile);
       const jobs = await readCronJobs(exec, configDir);
       return c.json({ jobs });
     } catch (err: any) {
