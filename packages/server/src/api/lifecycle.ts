@@ -21,7 +21,16 @@ import { fetchCodexQuota, getApiKeyFetcher } from "../pricing/codex-quota.js";
 const VERSION_CACHE_TTL = 60_000; // 60s
 const versionCache = new Map<string, { data: any; time: number }>();
 const XDG = `export XDG_RUNTIME_DIR=/run/user/$(id -u) 2>/dev/null; `;
-const PROXY_URL = "socks5h://127.0.0.1:1080";
+const PROXY_URL = "http://127.0.0.1:8118";
+const PROXY_CONFIG_PATH = "/etc/privoxy/config";
+
+function normalizeProxyAllowlist(input: string): string[] {
+  return input
+    .split(/[\n,]+/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => part.replace(/^\*\./, "."));
+}
 
 async function readProxyStatus(exec: CommandExecutor, unit: string) {
   const script = `${XDG}
@@ -29,38 +38,127 @@ proxy_active="false"
 if systemctl --user is-active socks-proxy.service >/dev/null 2>&1 || systemctl --user is-active ssh-socks-proxy.service >/dev/null 2>&1; then
   proxy_active="true"
 fi
+http_proxy_active="false"
+if sudo systemctl is-active privoxy >/dev/null 2>&1; then
+  http_proxy_active="true"
+fi
 proxy_enabled="false"
 unit_state="$(systemctl --user is-enabled ${unit}.service 2>/dev/null || true)"
 unit_available="false"
+proxy_scheme="none"
+can_enable="false"
+reason=""
+env_line="$(systemctl --user show ${unit}.service -p Environment --value 2>/dev/null || true)"
+allowlist_value=""
 case "$unit_state" in
   enabled|static|linked|disabled|indirect|generated|transient)
     unit_available="true"
     ;;
 esac
-if systemctl --user show ${unit}.service -p Environment --value 2>/dev/null | grep -q 'ALL_PROXY=${PROXY_URL}'; then
+if command -v privoxy >/dev/null 2>&1 && ss -ltn '( sport = :1080 )' 2>/dev/null | grep -q LISTEN; then
+  proxy_scheme="http"
+  can_enable="true"
+  reason="Proxy allowlist is available for this instance."
+elif ! command -v privoxy >/dev/null 2>&1; then
+  reason="privoxy is not installed on this host."
+else
+  reason="SOCKS tunnel on 127.0.0.1:1080 is not active."
+fi
+if printf '%s' "$env_line" | grep -q 'ALL_PROXY=${PROXY_URL}'; then
   proxy_enabled="true"
 fi
-printf '{"proxyServiceActive":%s,"instanceProxyEnabled":%s,"unitAvailable":%s}' "$proxy_active" "$proxy_enabled" "$unit_available"
+if [ -f "${PROXY_CONFIG_PATH}" ]; then
+  allowlist_value="$(awk '/# BEGIN CLAWCTL PROXY ALLOWLIST/{flag=1;next}/# END CLAWCTL PROXY ALLOWLIST/{flag=0}flag' "${PROXY_CONFIG_PATH}" | sed -n 's/^forward-socks5t[[:space:]]\\+\\([^[:space:]]\\+\\)[[:space:]].*/\\1/p' | paste -sd, -)"
+fi
+PROXY_ACTIVE="$proxy_active" \
+HTTP_PROXY_ACTIVE="$http_proxy_active" \
+PROXY_ENABLED="$proxy_enabled" \
+UNIT_AVAILABLE="$unit_available" \
+CAN_ENABLE="$can_enable" \
+PROXY_SCHEME="$proxy_scheme" \
+REASON="$reason" \
+ALLOWLIST_VALUE="$allowlist_value" \
+python3 - <<'PY'
+import json, os
+print(json.dumps({
+  "proxyServiceActive": os.environ["PROXY_ACTIVE"] == "true",
+  "httpProxyActive": os.environ["HTTP_PROXY_ACTIVE"] == "true",
+  "instanceProxyEnabled": os.environ["PROXY_ENABLED"] == "true",
+  "unitAvailable": os.environ["UNIT_AVAILABLE"] == "true",
+  "canEnable": os.environ["CAN_ENABLE"] == "true",
+  "proxyScheme": os.environ["PROXY_SCHEME"],
+  "reason": os.environ["REASON"],
+  "allowlist": os.environ.get("ALLOWLIST_VALUE", ""),
+}))
+PY
 `;
   const r = await exec.exec(script);
   if (r.exitCode !== 0) throw new Error(r.stderr || "Failed to read proxy status");
   return JSON.parse(r.stdout.trim());
 }
 
-async function enableProxyRoute(exec: CommandExecutor, unit: string) {
+async function enableProxyRoute(exec: CommandExecutor, unit: string, allowlist: string[]) {
+  const allowlistRules = allowlist
+    .map((entry) => `forward-socks5t ${entry} 127.0.0.1:1080 .`)
+    .join("\n");
   const script = `${XDG}
-mkdir -p "$HOME/.config/systemd/user/${unit}.service.d"
+tmp_cfg="$(mktemp)"
+sudo cp ${PROXY_CONFIG_PATH} "$tmp_cfg"
+sudo python3 - "$tmp_cfg" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+text = path.read_text()
+start = "# BEGIN CLAWCTL PROXY ALLOWLIST"
+end = "# END CLAWCTL PROXY ALLOWLIST"
+block = start + "\\nforward / .\\n${allowlistRules}\\n" + end
+if start in text and end in text:
+    before, rest = text.split(start, 1)
+    _, after = rest.split(end, 1)
+    text = before + block + after
+else:
+    text = text.rstrip() + "\\n\\n" + block + "\\n"
+path.write_text(text)
+PY
+sudo cp "$tmp_cfg" ${PROXY_CONFIG_PATH}
+rm -f "$tmp_cfg"
 cat > "$HOME/.config/systemd/user/${unit}.service.d/proxy.conf" <<'CLAWCTL_EOF'
 [Service]
 Environment=ALL_PROXY=${PROXY_URL}
 Environment=HTTP_PROXY=${PROXY_URL}
 Environment=HTTPS_PROXY=${PROXY_URL}
+Environment=NO_PROXY=localhost,127.0.0.1,::1
+Environment=no_proxy=localhost,127.0.0.1,::1
 CLAWCTL_EOF
 systemctl --user daemon-reload
+sudo systemctl restart privoxy
 systemctl --user restart ${unit}.service
 `;
   const r = await exec.exec(script);
   if (r.exitCode !== 0) throw new Error(r.stderr || "Failed to enable proxy route");
+}
+
+async function readCronJobs(exec: CommandExecutor, configDir: string) {
+  const encoded = Buffer.from(configDir, "utf8").toString("base64");
+  const script = `python3 - <<'PY'
+import base64, json
+from pathlib import Path
+cfg = Path(base64.b64decode("${encoded}").decode("utf-8"))
+jobs_path = cfg / "cron" / "jobs.json"
+if not jobs_path.is_file():
+    print("[]")
+    raise SystemExit(0)
+try:
+    data = json.loads(jobs_path.read_text(encoding="utf-8"))
+except Exception:
+    print("[]")
+    raise SystemExit(0)
+jobs = data.get("jobs", []) if isinstance(data, dict) else []
+print(json.dumps(jobs, ensure_ascii=False))
+PY`;
+  const r = await exec.exec(script);
+  if (r.exitCode !== 0) throw new Error(r.stderr || "Failed to read cron jobs");
+  return JSON.parse(r.stdout.trim() || "[]");
 }
 
 export function lifecycleRoutes(hostStore: HostStore, manager: InstanceManager, db: Database.Database) {
@@ -113,6 +211,20 @@ export function lifecycleRoutes(hostStore: HostStore, manager: InstanceManager, 
       return c.json(status);
     } catch {
       return c.json({ running: false });
+    }
+  });
+
+  app.get("/:id/cron-jobs", async (c) => {
+    const id = c.req.param("id");
+    const inst = manager.get(id);
+    if (!inst) return c.json({ error: "instance not found" }, 404);
+    try {
+      const exec = getExecutor(id, hostStore);
+      const configDir = await resolveConfigDir(id, manager, hostStore);
+      const jobs = await readCronJobs(exec, configDir);
+      return c.json({ jobs });
+    } catch (err: any) {
+      return c.json({ error: err.message || "Failed to read cron jobs" }, 500);
     }
   });
 
@@ -289,6 +401,7 @@ export function lifecycleRoutes(hostStore: HostStore, manager: InstanceManager, 
       return c.json({
         available: true,
         proxyUrl: PROXY_URL,
+        proxyServiceUnit: "privoxy.service",
         serviceUnit: `${unit}.service`,
         configDir,
         ...status,
@@ -302,17 +415,24 @@ export function lifecycleRoutes(hostStore: HostStore, manager: InstanceManager, 
     const id = c.req.param("id");
     const inst = manager.get(id);
     if (!inst) return c.json({ error: "instance not found" }, 404);
+    const body = await c.req.json().catch(() => ({})) as { noProxy?: string };
     const profile = profileFromInstanceId(id);
     const configDir = resolveConfigDir(inst, profile);
     const unit = inferServiceUnitName(id, configDir, profile);
     const exec = getExecutor(id, hostStore);
     try {
-      await enableProxyRoute(exec, unit);
+      const current = await readProxyStatus(exec, unit);
+      if (!current.canEnable) {
+        return c.json({ error: current.reason || "Proxy route is not supported on this host" }, 400);
+      }
+      const allowlist = normalizeProxyAllowlist((body as any).proxyAllowlist || (body as any).noProxy || "");
+      await enableProxyRoute(exec, unit, allowlist);
       const status = await readProxyStatus(exec, unit);
       auditLog(db, c, "lifecycle.proxy-enable", `Enabled proxy route for ${unit}.service`, id);
       return c.json({
         ok: true,
         proxyUrl: PROXY_URL,
+        proxyServiceUnit: "privoxy.service",
         serviceUnit: `${unit}.service`,
         configDir,
         ...status,

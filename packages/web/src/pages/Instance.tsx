@@ -25,7 +25,7 @@ function StatusDot({ status }: { status: string }) {
   return <span className={`inline-block w-2 h-2 rounded-full ${color}`} />;
 }
 
-type Tab = "overview" | "sessions" | "config" | "security" | "agents" | "channels" | "llm" | "skills" | "control";
+type Tab = "overview" | "sessions" | "config" | "security" | "agents" | "channels" | "llm" | "skills" | "cron" | "control";
 
 function OverviewTab({ inst, onSwitchTab, onSelectAgent }: { inst: InstanceInfo; onSwitchTab: (tab: Tab) => void; onSelectAgent: (agentId: string) => void }) {
   const { t } = useTranslation();
@@ -3297,6 +3297,141 @@ function SkillsTab({ inst }: { inst: InstanceInfo }) {
   );
 }
 
+interface CronJob {
+  id: string;
+  name?: string;
+  description?: string;
+  enabled?: boolean;
+  agentId?: string;
+  sessionTarget?: string;
+  wakeMode?: string;
+  schedule?: { kind?: string; expr?: string; tz?: string };
+  payload?: { kind?: string; message?: string };
+  delivery?: { mode?: string; channel?: string; channels?: string[] };
+  state?: {
+    nextRunAtMs?: number;
+    lastRunAtMs?: number;
+    lastStatus?: string;
+    lastRunStatus?: string;
+    lastDurationMs?: number;
+    consecutiveErrors?: number;
+    lastDelivered?: boolean;
+    lastDeliveryStatus?: string;
+    lastError?: string;
+  };
+}
+
+function CronTab({ inst }: { inst: InstanceInfo }) {
+  const [selectedAgent, setSelectedAgent] = useState(inst.agents[0]?.id || "main");
+  const [jobs, setJobs] = useState<CronJob[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    get<{ jobs: CronJob[] }>(`/lifecycle/${inst.id}/cron-jobs`)
+      .then((r) => {
+        if (cancelled) return;
+        setJobs(r.jobs || []);
+      })
+      .catch((err: any) => {
+        if (cancelled) return;
+        setError(err?.message || "Failed to load cron jobs");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [inst.id]);
+
+  const filtered = jobs
+    .filter((job) => (job.agentId || "main") === selectedAgent)
+    .sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
+
+  const fmtTime = (ms?: number) => {
+    if (!ms) return "—";
+    return new Date(ms).toLocaleString("zh-CN", { hour12: false });
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center gap-3">
+        <label className="text-sm text-ink-2">Agent</label>
+        <select
+          value={selectedAgent}
+          onChange={(e) => setSelectedAgent(e.target.value)}
+          className="bg-s1 border border-edge rounded px-3 py-1.5 text-sm text-ink"
+        >
+          {inst.agents.map((a) => (
+            <option key={a.id} value={a.id}>{a.name || a.id}</option>
+          ))}
+        </select>
+      </div>
+
+      <div className="bg-s1 border border-edge rounded-card overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-edge">
+          <h3 className="text-sm font-medium text-ink">定时任务</h3>
+          <div className="text-xs text-ink-3">{filtered.length} 个</div>
+        </div>
+
+        {loading ? (
+          <div className="p-4 text-sm text-ink-3">加载中…</div>
+        ) : error ? (
+          <div className="p-4 text-sm text-danger">{error}</div>
+        ) : filtered.length === 0 ? (
+          <div className="p-4 text-sm text-ink-3">这个 agent 暂无定时任务</div>
+        ) : (
+          <table className="w-full">
+            <thead>
+              <tr className="text-xs text-ink-3 border-b border-edge">
+                <th className="text-left px-4 py-2 font-medium">任务</th>
+                <th className="text-left px-4 py-2 font-medium">Cron</th>
+                <th className="text-left px-4 py-2 font-medium">状态</th>
+                <th className="text-left px-4 py-2 font-medium">下次运行</th>
+                <th className="text-left px-4 py-2 font-medium">最近结果</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((job) => (
+                <tr key={job.id} className="border-b border-edge last:border-b-0 align-top">
+                  <td className="px-4 py-3 text-sm text-ink">
+                    <div className="font-medium">{job.name || job.id}</div>
+                    {job.description && <div className="text-xs text-ink-3 mt-1">{job.description}</div>}
+                    {job.payload?.message && (
+                      <div className="text-xs text-ink-3 mt-2 whitespace-pre-wrap break-words max-w-[520px]">
+                        {job.payload.message}
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-xs text-ink-2">
+                    <div className="font-mono">{job.schedule?.expr || "—"}</div>
+                    <div className="mt-1">{job.schedule?.tz || "—"}</div>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-ink-2">
+                    <div>{job.enabled ? "启用" : "停用"}</div>
+                    <div className="mt-1">delivery: {job.delivery?.mode || "—"}</div>
+                    <div className="mt-1">wake: {job.wakeMode || "—"}</div>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-ink-2">{fmtTime(job.state?.nextRunAtMs)}</td>
+                  <td className="px-4 py-3 text-xs text-ink-2">
+                    <div>{job.state?.lastRunStatus || job.state?.lastStatus || "—"}</div>
+                    <div className="mt-1">{fmtTime(job.state?.lastRunAtMs)}</div>
+                    {job.state?.lastError && (
+                      <div className="mt-1 text-danger whitespace-pre-wrap break-words max-w-[260px]">{job.state.lastError}</div>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function Instance() {
   const { t } = useTranslation();
   const { id } = useParams<{ id: string }>();
@@ -3310,7 +3445,7 @@ export function Instance() {
 
   useEffect(() => {
     const tab = searchParams.get("tab") as Tab;
-    if (tab && ["overview", "sessions", "config", "security", "agents", "channels", "llm", "control"].includes(tab)) {
+    if (tab && ["overview", "sessions", "config", "security", "agents", "channels", "llm", "skills", "cron", "control"].includes(tab)) {
       setActiveTab(tab);
     }
   }, [searchParams]);
@@ -3360,6 +3495,7 @@ export function Instance() {
     { key: "channels", label: t("instance.channelsTab") },
     { key: "llm", label: t("instance.llmTab") },
     { key: "skills", label: t("instance.skillsTab") },
+    { key: "cron", label: "定时任务" },
     { key: "control", label: t("instance.controlTab") },
   ];
 
@@ -3442,6 +3578,7 @@ export function Instance() {
           {activeTab === "channels" && <ChannelsTab inst={inst} />}
           {activeTab === "llm" && <LlmTab inst={inst} />}
           {activeTab === "skills" && <SkillsTab inst={inst} />}
+          {activeTab === "cron" && <CronTab inst={inst} />}
           {activeTab === "control" && <ControlTab inst={inst} />}
         </div>
       </div>
