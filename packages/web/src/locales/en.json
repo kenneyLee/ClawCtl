@@ -190,7 +190,10 @@
     "allowLabel": "Allow:",
     "groupAllowLabel": "Group Allow:",
     "clickToManage": "Click to manage channels →",
-    "confirmDelete": "Delete channel {{channel}} and remove all its bindings? This cannot be undone."
+    "confirmDelete": "Delete channel {{channel}} and remove all its bindings? This cannot be undone.",
+    "switchTo": "Switch to",
+    "switchToConfirm": "Switch to {{channel}}? All other channels will be disabled.",
+    "switching": "Switching..."
   },
   "config": {
     "title": "Config Management",
@@ -456,8 +459,13 @@
       "proxyTunnelActive": "active",
       "proxyTunnelInactive": "inactive",
       "proxyInstanceStatus": "Instance proxy",
+      "proxySupportStatus": "Support",
+      "proxySupported": "supported",
+      "proxyUnsupported": "unsupported",
       "proxyNotEnabled": "not enabled",
       "proxyUnavailable": "Unable to read proxy status for this instance",
+      "proxyAllowlistLabel": "Proxy domain allowlist",
+      "proxyAllowlistPlaceholder": "Example: auth.openai.com,api.openai.com",
       "quota": "Quota",
       "window": "window",
       "remaining": "remaining",

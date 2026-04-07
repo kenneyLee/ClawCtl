@@ -414,6 +414,8 @@ function AgentsTab({ inst, initialAgentId, onSwitchTab }: { inst: InstanceInfo; 
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [showRestartDialog, setShowRestartDialog] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
+  const [viewingAgentDoc, setViewingAgentDoc] = useState<{ agentId: string; path: string; content: string; source?: string } | null>(null);
+  const [loadingAgentDoc, setLoadingAgentDoc] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [hasProvider, setHasProvider] = useState(true); // optimistic default
   const [proxyStatus, setProxyStatus] = useState<ProxyStatus | null>(null);
@@ -561,6 +563,29 @@ function AgentsTab({ inst, initialAgentId, onSwitchTab }: { inst: InstanceInfo; 
       workspaceOnly: templateConfig.workspaceOnly,
       fsWorkspaceOnly: templateConfig.workspaceOnly,
     });
+  };
+
+  const handleViewAgentDoc = async (agentId: string) => {
+    setLoadingAgentDoc(agentId);
+    try {
+      const res = await get<{ exists: boolean; path: string; content: string; source?: string }>(
+        `/lifecycle/${inst.id}/agents/${encodeURIComponent(agentId)}/doc`,
+      );
+      setViewingAgentDoc({
+        agentId,
+        path: res.path,
+        source: res.source,
+        content: res.exists ? (res.content || "") : "未找到该 Agent 的文档文件。",
+      });
+    } catch (err: any) {
+      setViewingAgentDoc({
+        agentId,
+        path: "",
+        content: err?.message || "加载 Agent 文档失败",
+      });
+    } finally {
+      setLoadingAgentDoc(null);
+    }
   };
 
   if (loading) {
@@ -725,6 +750,13 @@ function AgentsTab({ inst, initialAgentId, onSwitchTab }: { inst: InstanceInfo; 
               )}
               <div className="flex items-center gap-3 mt-6 pt-4 border-t border-edge">
                 <button
+                  onClick={() => handleViewAgentDoc(selected.id)}
+                  disabled={loadingAgentDoc === selected.id}
+                  className="px-3 py-2 text-sm rounded bg-s2 text-ink hover:bg-s2/80 disabled:opacity-40"
+                >
+                  {loadingAgentDoc === selected.id ? "加载中" : "查看 AGENT.md"}
+                </button>
+                <button
                   onClick={saveAll}
                   disabled={busy}
                   className="px-4 py-2 text-sm rounded bg-brand text-white hover:bg-brand-light disabled:opacity-40"
@@ -788,6 +820,30 @@ function AgentsTab({ inst, initialAgentId, onSwitchTab }: { inst: InstanceInfo; 
         open={showRestartDialog}
         onClose={() => setShowRestartDialog(false)}
       />
+
+      {viewingAgentDoc && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-4xl max-h-[85vh] overflow-hidden rounded-xl border border-edge bg-s1 shadow-xl">
+            <div className="flex items-start justify-between gap-4 border-b border-edge px-4 py-3">
+              <div className="min-w-0">
+                <div className="text-sm font-medium text-ink">{viewingAgentDoc.agentId} AGENT.md</div>
+                {viewingAgentDoc.path && <div className="text-xs text-ink-3 mt-1 break-all">{viewingAgentDoc.path}</div>}
+                {viewingAgentDoc.source && <div className="text-xs text-ink-3 mt-1">来源: {viewingAgentDoc.source}</div>}
+              </div>
+              <button
+                onClick={() => setViewingAgentDoc(null)}
+                className="text-ink-3 hover:text-ink transition-colors"
+                title={t("common.close")}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="max-h-[calc(85vh-88px)] overflow-auto px-4 py-3">
+              <pre className="whitespace-pre-wrap break-words text-xs leading-6 text-ink">{viewingAgentDoc.content || "文档为空。"}</pre>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2483,6 +2539,7 @@ function ChannelsTab({ inst }: { inst: InstanceInfo }) {
   const [createSteps, setCreateSteps] = useState<{ step: string; status: string; detail?: string }[]>([]);
   const [createRunning, setCreateRunning] = useState(false);
   const [createDone, setCreateDone] = useState<boolean | null>(null);
+  const [switching, setSwitching] = useState<string | null>(null);
 
   useEffect(() => { loadChannels(); }, [inst.id]);
 
@@ -2523,6 +2580,29 @@ function ChannelsTab({ inst }: { inst: InstanceInfo }) {
     } catch (err: any) {
       alert(`${t("common.delete")} failed: ${err.message}`);
     }
+  }
+
+  async function handleSwitchTo(targetChannel: string) {
+    if (!confirm(t("channels.switchToConfirm", { channel: targetChannel }))) return;
+    setSwitching(targetChannel);
+    try {
+      await Promise.all(
+        channels.map((ch: any) =>
+          ch.accounts.map((acc: any) =>
+            put(`/lifecycle/${inst.id}/channels/config`, {
+              channel: ch.type,
+              accountId: acc.accountId,
+              config: { enabled: ch.type === targetChannel },
+            })
+          )
+        ).flat()
+      );
+      setShowRestartDialog(true);
+      loadChannels();
+    } catch (err: any) {
+      alert(`${t("common.error")}: ${err.message}`);
+    }
+    setSwitching(null);
   }
 
   function startEdit(channel: string, accountId: string, account: any, configChannels: any) {
@@ -2897,6 +2977,15 @@ function ChannelsTab({ inst }: { inst: InstanceInfo }) {
                 {connectedCount > 0 && <span className="text-ok">{connectedCount} {t("channels.connected")}</span>}
                 {runningCount > connectedCount && <span className="text-ok">{runningCount - connectedCount} {t("channels.running")}</span>}
                 {ch.accounts.length > runningCount && <span className="text-ink-2">{ch.accounts.length - runningCount} {t("channels.stopped")}</span>}
+                {channels.length > 0 && (
+                  <button
+                    onClick={() => handleSwitchTo(ch.type)}
+                    disabled={switching !== null}
+                    className="px-2 py-1 rounded bg-brand/10 border border-brand/30 text-brand hover:bg-brand/20 flex items-center gap-1 disabled:opacity-50"
+                  >
+                    {switching === ch.type ? t("channels.switching") : t("channels.switchTo")}
+                  </button>
+                )}
                 <button
                   onClick={() => handleDeleteChannel(ch.type)}
                   className="px-2 py-1 rounded bg-danger/10 border border-danger/30 text-danger hover:bg-danger/20 flex items-center gap-1"

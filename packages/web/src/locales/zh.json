@@ -190,7 +190,10 @@
     "allowLabel": "允许列表：",
     "groupAllowLabel": "群组允许列表：",
     "clickToManage": "点击管理频道 →",
-    "confirmDelete": "删除渠道 {{channel}} 并移除所有绑定？此操作不可撤销。"
+    "confirmDelete": "删除渠道 {{channel}} 并移除所有绑定？此操作不可撤销。",
+    "switchTo": "切换到",
+    "switchToConfirm": "切换到 {{channel}}？其他所有渠道将被禁用。",
+    "switching": "切换中..."
   },
   "config": {
     "title": "配置管理",
@@ -456,8 +459,13 @@
       "proxyTunnelActive": "运行中",
       "proxyTunnelInactive": "未运行",
       "proxyInstanceStatus": "实例代理",
+      "proxySupportStatus": "是否可启用",
+      "proxySupported": "支持",
+      "proxyUnsupported": "不支持",
       "proxyNotEnabled": "未启用",
       "proxyUnavailable": "当前未能读取代理状态",
+      "proxyAllowlistLabel": "代理域名白名单",
+      "proxyAllowlistPlaceholder": "例如：auth.openai.com,api.openai.com",
       "quota": "额度",
       "window": "窗口",
       "remaining": "剩余",

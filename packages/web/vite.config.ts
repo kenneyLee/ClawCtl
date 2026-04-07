@@ -5,6 +5,7 @@ import tailwindcss from "@tailwindcss/vite";
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
+    allowedHosts: ["agent.yubinglabs.com"],
     host: "0.0.0.0",
     port: 7101,
     proxy: {

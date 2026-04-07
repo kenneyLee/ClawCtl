@@ -389,6 +389,46 @@ export function lifecycleRoutes(hostStore: HostStore, manager: InstanceManager, 
     }
   });
 
+  app.get("/:id/agents/:agentId/doc", async (c) => {
+    const id = c.req.param("id");
+    const agentId = c.req.param("agentId");
+    const inst = manager.get(id);
+    if (!inst) return c.json({ error: "instance not found" }, 404);
+    const profile = profileFromInstanceId(id);
+    const configDir = resolveConfigDir(inst, profile);
+    const exec = getExecutor(id, hostStore);
+    const workspaceRoot = configDir.endsWith("/.openclaw")
+      ? configDir.slice(0, -"/.openclaw".length)
+      : configDir;
+    const upperAgentId = agentId.toUpperCase().replace(/[^A-Z0-9_-]/g, "_");
+    const script = [
+      "python3 - <<'PY'",
+      "from pathlib import Path",
+      `workspace = Path(${JSON.stringify(`${workspaceRoot}/workspace`)})`,
+      `agent_id = ${JSON.stringify(agentId)}`,
+      `upper_agent_id = ${JSON.stringify(upperAgentId)}`,
+      "candidates = [",
+      "    workspace / f'{upper_agent_id}_AGENT.md',",
+      "    workspace / f'{agent_id}_AGENT.md',",
+      "    workspace / 'AGENTS.md',",
+      "]",
+      "for path in candidates:",
+      "    if path.is_file():",
+      "        print('{\"exists\": true, \"path\": ' + __import__('json').dumps(str(path)) + ', \"content\": ' + __import__('json').dumps(path.read_text()) + ', \"source\": ' + __import__('json').dumps(path.name) + '}')",
+      "        break",
+      "else:",
+      "    print('{\"exists\": false, \"path\": ' + __import__('json').dumps(str(candidates[0])) + ', \"content\": \"\", \"source\": \"\"}')",
+      "PY",
+    ].join("\n");
+    try {
+      const result = await exec.exec(script);
+      if (result.exitCode !== 0) throw new Error(result.stderr || "Failed to read agent doc");
+      return c.json(JSON.parse(result.stdout));
+    } catch (err: any) {
+      return c.json({ error: `Failed to read agent doc: ${err.message}` }, 500);
+    }
+  });
+
   app.get("/:id/proxy-status", async (c) => {
     const id = c.req.param("id");
     const inst = manager.get(id);
