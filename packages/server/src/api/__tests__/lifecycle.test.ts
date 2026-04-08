@@ -47,6 +47,12 @@ vi.mock("../../lifecycle/config.js", () => ({
     const parts = id.split("-");
     return parts[parts.length - 1];
   }),
+  inferServiceUnitName: vi.fn((_id: string, configDir: string, fallbackProfile: string) => {
+    const configName = configDir.split("/").filter(Boolean).pop() || "";
+    if (configName === ".openclaw") return "openclaw-gateway";
+    if (configName.startsWith(".openclaw-")) return `openclaw-gateway-${configName.slice(".openclaw-".length)}`;
+    return fallbackProfile === "default" ? "openclaw-gateway" : `openclaw-gateway-${fallbackProfile}`;
+  }),
 }));
 
 import { lifecycleRoutes } from "../lifecycle.js";
@@ -171,7 +177,7 @@ describe("Lifecycle API routes", () => {
       expect(res.status).toBe(200);
       const data = await res.json() as any;
       expect(data.ok).toBe(true);
-      expect(startProcess).toHaveBeenCalledWith(mockExecutor, "$HOME/.openclaw-main", 18789, "main");
+      expect(startProcess).toHaveBeenCalledWith(mockExecutor, "$HOME/.openclaw-main", 18789, "openclaw-gateway-main");
     });
 
     it("returns 404 for unknown instance", async () => {
@@ -188,7 +194,7 @@ describe("Lifecycle API routes", () => {
       expect(res.status).toBe(200);
       const data = await res.json() as any;
       expect(data.ok).toBe(true);
-      expect(restartProcess).toHaveBeenCalledWith(mockExecutor, "$HOME/.openclaw-main", 18789, "main");
+      expect(restartProcess).toHaveBeenCalledWith(mockExecutor, "$HOME/.openclaw-main", 18789, "openclaw-gateway-main");
     });
 
     it("returns 404 for unknown instance", async () => {

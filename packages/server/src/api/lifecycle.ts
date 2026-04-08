@@ -254,11 +254,12 @@ export function lifecycleRoutes(hostStore: HostStore, manager: InstanceManager, 
     if (!inst) { console.log(`[lifecycle] instance ${id} not found`); return c.json({ error: "instance not found" }, 404); }
     const port = parsePortFromInstance(inst);
     const profile = profileFromInstanceId(id);
-    const configDir = getConfigDir(profile);
+    const configDir = resolveConfigDir(inst, profile);
+    const unit = inferServiceUnitName(id, configDir, profile);
     const exec = getExecutor(id, hostStore);
-    console.log(`[lifecycle] starting ${id}: port=${port}, profile=${profile}, configDir=${configDir}`);
+    console.log(`[lifecycle] starting ${id}: port=${port}, profile=${profile}, configDir=${configDir}, unit=${unit}`);
     try {
-      await startProcess(exec, configDir, port, profile);
+      await startProcess(exec, configDir, port, unit);
       console.log(`[lifecycle] started ${id} OK`);
       auditLog(db, c, "lifecycle.start", `Started on port ${port}`, id);
       return c.json({ ok: true });
@@ -275,10 +276,11 @@ export function lifecycleRoutes(hostStore: HostStore, manager: InstanceManager, 
     if (!inst) return c.json({ error: "instance not found" }, 404);
     const port = parsePortFromInstance(inst);
     const profile = profileFromInstanceId(id);
-    const configDir = getConfigDir(profile);
+    const configDir = resolveConfigDir(inst, profile);
+    const unit = inferServiceUnitName(id, configDir, profile);
     const exec = getExecutor(id, hostStore);
     try {
-      await restartProcess(exec, configDir, port, profile);
+      await restartProcess(exec, configDir, port, unit);
       auditLog(db, c, "lifecycle.restart", `Restarted on port ${port}`, id);
       return c.json({ ok: true });
     } catch (err: any) {
@@ -302,7 +304,8 @@ export function lifecycleRoutes(hostStore: HostStore, manager: InstanceManager, 
 
     const port = parsePortFromInstance(inst);
     const profile = profileFromInstanceId(id);
-    const configDir = getConfigDir(profile);
+    const configDir = resolveConfigDir(inst, profile);
+    const unit = inferServiceUnitName(id, configDir, profile);
     const exec = getExecutor(id, hostStore);
 
     return stream(c, async (s) => {
@@ -330,7 +333,7 @@ export function lifecycleRoutes(hostStore: HostStore, manager: InstanceManager, 
 
         if (action === "restart" || action === "start") {
           await send("starting");
-          await startProcess(exec, configDir, port, profile);
+          await startProcess(exec, configDir, port, unit);
 
           let finalPid: number | undefined;
           let started = false;
