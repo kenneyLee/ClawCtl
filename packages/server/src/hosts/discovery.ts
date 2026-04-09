@@ -66,7 +66,7 @@ export async function discoverRemoteInstances(
 
   const results: GatewayConnection[] = [];
   const seenPorts = new Set<number>();
-  const blocks = stdout.split(DELIM).filter(Boolean);
+  const blocks = stdout.split(DELIM).slice(1).filter(Boolean);
   console.log(`[discovery] found ${blocks.length} blocks`);
 
   for (const block of blocks) {
