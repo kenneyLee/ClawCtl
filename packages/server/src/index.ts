@@ -125,7 +125,7 @@ async function start() {
       ? { password: cred }
       : { privateKey: cred };
     try {
-      const connections = await discoverRemoteInstances(host, credential);
+      const connections = await discoverRemoteInstances(host, credential, host.scanDirs || undefined);
       for (const conn of connections) {
         try {
           const remotePort = parseInt(new URL(conn.url.replace("ws://", "http://")).port) || 18789;
@@ -151,7 +151,7 @@ async function start() {
     const cred = hostStore.getDecryptedCredential(host.id);
     if (!cred) return null;
     const credential = host.authMethod === "password" ? { password: cred } : { privateKey: cred };
-    const connections = await discoverRemoteInstances(host, credential);
+    const connections = await discoverRemoteInstances(host, credential, host.scanDirs || undefined);
     const conn = connections.find((c) => c.id === instanceId);
     if (!conn) return null;
     const remotePort = parseInt(new URL(conn.url.replace("ws://", "http://")).port) || 18789;
